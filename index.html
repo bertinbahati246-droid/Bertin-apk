@@ -4406,8 +4406,41 @@ const App = {
         const hT = this.teams.find(t => t.name === home);
         const aT = this.teams.find(t => t.name === away);
 
-        const formHome = result.formHome || { points: 0.5, trend: 'stable' };
-        const formAway = result.formAway || { points: 0.5, trend: 'stable' };
+        // --- Forme récente : on utilise formLast5 s'il est différent des valeurs par défaut ---
+        const defaultForm = ['D','D','D','D','D'];
+        let hForm = hT?.formLast5 || defaultForm;
+        let aForm = aT?.formLast5 || defaultForm;
+        // Si le tableau est exactement le défaut, on considère que les données ne sont pas disponibles
+        const hFormAvailable = !(hForm.length === 5 && hForm.every(v => v === 'D'));
+        const aFormAvailable = !(aForm.length === 5 && aForm.every(v => v === 'D'));
+
+        // Construction des lignes de forme récente (en français)
+        const formatForm = (form, available) => {
+            if (!available) return '  Données de forme non disponibles';
+            return form.map((r, i) => `  ${i+1}. ${r === 'W' ? 'Victoire' : r === 'D' ? 'Nul' : 'Défaite'}`).join('\n');
+        };
+        const hFormText = formatForm(hForm, hFormAvailable);
+        const aFormText = formatForm(aForm, aFormAvailable);
+
+        // Comptage des victoires/nuls/défaites (si disponibles)
+        const countResults = (form) => {
+            if (!form || form.length === 0) return { wins: 0, draws: 0, losses: 0 };
+            return {
+                wins: form.filter(r => r === 'W').length,
+                draws: form.filter(r => r === 'D').length,
+                losses: form.filter(r => r === 'L').length
+            };
+        };
+        const hCount = countResults(hForm);
+        const aCount = countResults(aForm);
+
+        // Statistiques détaillées
+        const hStats = hT?.stats || {};
+        const aStats = aT?.stats || {};
+        const hGoalsFor = hT?.goalsScored || 0;
+        const hGoalsAgainst = hT?.goalsConceded || 0;
+        const aGoalsFor = aT?.goalsScored || 0;
+        const aGoalsAgainst = aT?.goalsConceded || 0;
         const hElo = hT?.elo || 1500;
         const aElo = aT?.elo || 1500;
         const hXG = hT?.xG || 1.0;
@@ -4419,21 +4452,34 @@ const App = {
         const hMatches = hT?.matches || 0;
         const aMatches = aT?.matches || 0;
 
-        // Récupération des stats détaillées si disponibles
-        const hStats = hT?.stats || {};
-        const aStats = aT?.stats || {};
-        const hGoalsFor = hT?.goalsScored || 0;
-        const hGoalsAgainst = hT?.goalsConceded || 0;
-        const aGoalsFor = aT?.goalsScored || 0;
-        const aGoalsAgainst = aT?.goalsConceded || 0;
-        const hForm = hT?.formLast5 || ['D','D','D','D','D'];
-        const aForm = aT?.formLast5 || ['D','D','D','D','D'];
-        const hFormText = hForm.map((r, i) => `  ${i+1}. ${r === 'W' ? 'Victoire' : r === 'D' ? 'Nul' : 'Défaite'}`).join('\n');
-        const aFormText = aForm.map((r, i) => `  ${i+1}. ${r === 'W' ? 'Victoire' : r === 'D' ? 'Nul' : 'Défaite'}`).join('\n');
+        // Statistiques avancées (si disponibles)
+        const hPossession = hStats.possession ? `${hStats.possession.toFixed(1)}%` : 'N/A';
+        const aPossession = aStats.possession ? `${aStats.possession.toFixed(1)}%` : 'N/A';
+        const hPPDA = hStats.ppda ? hStats.ppda.toFixed(2) : 'N/A';
+        const aPPDA = aStats.ppda ? aStats.ppda.toFixed(2) : 'N/A';
+        const hPPDAAllowed = hStats.ppda_allowed ? hStats.ppda_allowed.toFixed(2) : 'N/A';
+        const aPPDAAllowed = aStats.ppda_allowed ? aStats.ppda_allowed.toFixed(2) : 'N/A';
+        const hDeep = hStats.deep ? hStats.deep.toFixed(1) : 'N/A';
+        const aDeep = aStats.deep ? aStats.deep.toFixed(1) : 'N/A';
+        const hShots = hStats.shots ? hStats.shots.toFixed(1) : 'N/A';
+        const aShots = aStats.shots ? aStats.shots.toFixed(1) : 'N/A';
+        const hShotsOnTarget = hStats.shotsOnTargetPerMatch ? hStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A';
+        const aShotsOnTarget = aStats.shotsOnTargetPerMatch ? aStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A';
 
         // Récupération des données H2H depuis le résultat de l'analyse
         const h2hMatches = result.h2hMatches || [];
         const h2hDataDisplay = result.h2hDataDisplay || 'Aucune donnée H2H disponible';
+
+        // Calcul des probabilités Over 0.5 / 1.5 depuis result.valueBets
+        const findProb = (key) => {
+            const found = result.valueBets?.find(v => v.key === key);
+            return found ? found.modelProb : 0;
+        };
+        const over05Prob = findProb('over0.5');
+        const over15Prob = findProb('over1.5');
+        const over25Prob = result.markets?.Over25 || 0;
+        const over35Prob = findProb('over3.5');
+        const over45Prob = findProb('over4.5');
 
         // Construction du prompt
         let prompt = `Tu es l’analyste football externe de RED DATA.
@@ -4483,7 +4529,7 @@ Compétition : ${league}
 Date : ${date}
 Heure : (à préciser)
 Terrain : ${terrain}
-Qualité globale des données : ${Math.round(result.confidence)}/100
+Qualité globale des données : ${Math.round(result.confidence || 0)}/100
 
 === ÉQUIPE DOMICILE ===
 
@@ -4501,18 +4547,17 @@ Statistiques totales (tous matchs) :
 Matchs : ${hMatches}
 Buts marqués : ${hGoalsFor}
 Buts encaissés : ${hGoalsAgainst}
-Victoires : ${hForm.filter(r => r === 'W').length}
-Nuls : ${hForm.filter(r => r === 'D').length}
-Défaites : ${hForm.filter(r => r === 'L').length}
+Victoires : ${hCount.wins}
+Nuls : ${hCount.draws}
+Défaites : ${hCount.losses}
 
 Statistiques avancées (si disponibles) :
-- Possession : ${hStats.possession ? `${hStats.possession.toFixed(1)}%` : 'N/A'}
-- PPDA : ${hStats.ppda ? hStats.ppda.toFixed(2) : 'N/A'}
-- PPDA subi : ${hStats.ppda_allowed ? hStats.ppda_allowed.toFixed(2) : 'N/A'}
-- Deep entries : ${hStats.deep ? hStats.deep.toFixed(1) : 'N/A'}
-- Deep entries subies : ${hStats.deep_allowed ? hStats.deep_allowed.toFixed(1) : 'N/A'}
-- Tirs cadrés / match : ${hStats.shotsOnTargetPerMatch ? hStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
-- Tirs / match : ${hStats.shots ? hStats.shots.toFixed(1) : 'N/A'}
+- Possession : ${hPossession}
+- PPDA : ${hPPDA}
+- PPDA subi : ${hPPDAAllowed}
+- Deep entries : ${hDeep}
+- Tirs / match : ${hShots}
+- Tirs cadrés / match : ${hShotsOnTarget}
 
 === ÉQUIPE EXTÉRIEURE ===
 
@@ -4530,35 +4575,34 @@ Statistiques totales (tous matchs) :
 Matchs : ${aMatches}
 Buts marqués : ${aGoalsFor}
 Buts encaissés : ${aGoalsAgainst}
-Victoires : ${aForm.filter(r => r === 'W').length}
-Nuls : ${aForm.filter(r => r === 'D').length}
-Défaites : ${aForm.filter(r => r === 'L').length}
+Victoires : ${aCount.wins}
+Nuls : ${aCount.draws}
+Défaites : ${aCount.losses}
 
 Statistiques avancées (si disponibles) :
-- Possession : ${aStats.possession ? `${aStats.possession.toFixed(1)}%` : 'N/A'}
-- PPDA : ${aStats.ppda ? aStats.ppda.toFixed(2) : 'N/A'}
-- PPDA subi : ${aStats.ppda_allowed ? aStats.ppda_allowed.toFixed(2) : 'N/A'}
-- Deep entries : ${aStats.deep ? aStats.deep.toFixed(1) : 'N/A'}
-- Deep entries subies : ${aStats.deep_allowed ? aStats.deep_allowed.toFixed(1) : 'N/A'}
-- Tirs cadrés / match : ${aStats.shotsOnTargetPerMatch ? aStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
-- Tirs / match : ${aStats.shots ? aStats.shots.toFixed(1) : 'N/A'}
+- Possession : ${aPossession}
+- PPDA : ${aPPDA}
+- PPDA subi : ${aPPDAAllowed}
+- Deep entries : ${aDeep}
+- Tirs / match : ${aShots}
+- Tirs cadrés / match : ${aShotsOnTarget}
 
 ⸻
 
 3. DONNÉES DÉTAILLÉES
 
 Tirs :
-Domicile : ${hStats.shots ? hStats.shots.toFixed(1) : 'N/A'}
-Extérieur : ${aStats.shots ? aStats.shots.toFixed(1) : 'N/A'}
+Domicile : ${hShots}
+Extérieur : ${aShots}
 
 Tirs cadrés :
-Domicile : ${hStats.shotsOnTargetPerMatch ? hStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
-Extérieur : ${aStats.shotsOnTargetPerMatch ? aStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
+Domicile : ${hShotsOnTarget}
+Extérieur : ${aShotsOnTarget}
 
-Corners : ${hStats.corners ? `${hStats.corners.toFixed(1)} (dom)` : 'N/A'} / ${aStats.corners ? `${aStats.corners.toFixed(1)} (ext)` : 'N/A'}
-Cartons : ${hStats.cards ? `${hStats.cards.toFixed(1)} (dom)` : 'N/A'} / ${aStats.cards ? `${aStats.cards.toFixed(1)} (ext)` : 'N/A'}
+Corners : ${hStats.corners ? hStats.corners.toFixed(1) : 'N/A'} / ${aStats.corners ? aStats.corners.toFixed(1) : 'N/A'}
+Cartons : ${hStats.cards ? hStats.cards.toFixed(1) : 'N/A'} / ${aStats.cards ? aStats.cards.toFixed(1) : 'N/A'}
 
-Possession : ${hStats.possession ? `${hStats.possession.toFixed(1)}% (domicile)` : 'N/A'} / ${aStats.possession ? `${aStats.possession.toFixed(1)}% (extérieur)` : 'N/A'}
+Possession : ${hPossession} / ${aPossession}
 
 Autres statistiques disponibles :
 ${hT?.statsImported ? '📊 Statistiques importées (JSON) disponibles' : '📋 Statistiques issues des matchs CSV'}
@@ -4603,11 +4647,11 @@ Oui : ${(result.markets?.BTTS * 100 || 0).toFixed(1)}%
 Non : ${((1 - (result.markets?.BTTS || 0)) * 100).toFixed(1)}%
 
 Buts :
-Over 0.5 : ${(result.valueBets?.find(v => v.key === 'over0.5')?.modelProb * 100 || 0).toFixed(1)}%
-Over 1.5 : ${(result.valueBets?.find(v => v.key === 'over1.5')?.modelProb * 100 || 0).toFixed(1)}%
-Over 2.5 : ${(result.markets?.Over25 * 100 || 0).toFixed(1)}%
-Over 3.5 : ${(result.valueBets?.find(v => v.key === 'over3.5')?.modelProb * 100 || 0).toFixed(1)}%
-Over 4.5 : ${(result.valueBets?.find(v => v.key === 'over4.5')?.modelProb * 100 || 0).toFixed(1)}%
+Over 0.5 : ${(over05Prob * 100).toFixed(1)}%
+Over 1.5 : ${(over15Prob * 100).toFixed(1)}%
+Over 2.5 : ${(over25Prob * 100).toFixed(1)}%
+Over 3.5 : ${(over35Prob * 100).toFixed(1)}%
+Over 4.5 : ${(over45Prob * 100).toFixed(1)}%
 
 Autres probabilités calculées :
 ${result.valueBets?.filter(v => v.category !== 'main').slice(0, 5).map(v => `${v.market} : ${(v.modelProb * 100).toFixed(1)}%`).join('\n') || 'Aucune autre'}
@@ -4919,7 +4963,7 @@ ${result.isTrap ? result.trapMessage : 'Risque modéré - surveiller les composi
 
 🔎 QUALITÉ DES DONNÉES
 
-${Math.round(result.confidence)}/100
+${Math.round(result.confidence || 0)}/100
 
 Puis indique :
 
