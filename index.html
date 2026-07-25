@@ -1023,7 +1023,7 @@
         .backtest-result .bad { color: var(--red); }
         .league-edit-row {
             display: grid;
-            grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;
+            grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;
             gap: 6px;
             padding: 6px 0;
             border-bottom: 1px solid var(--border);
@@ -1080,6 +1080,46 @@
             .market-grid { grid-template-columns: 1fr; }
             .search-input { min-width: 100px; }
         }
+        /* --- Nouveaux styles pour l'onglet Ajouter match --- */
+        .match-entry-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 0.5fr 0.5fr 0.8fr auto;
+            gap: 6px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.6rem;
+            align-items: center;
+        }
+        .match-entry-row.header {
+            font-weight: 700;
+            color: var(--cyan);
+            border-bottom: 2px solid var(--cyan);
+            font-size: 0.55rem;
+            padding: 8px 0;
+        }
+        .match-entry-row input, .match-entry-row select {
+            padding: 4px 6px;
+            font-size: 0.55rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            width: 100%;
+        }
+        .match-entry-row .btn-sm { padding: 2px 8px; font-size: 0.45rem; min-height: 24px; min-width: 24px; }
+        /* --- Style pour le prompt --- */
+        #promptOutput {
+            background: var(--bg);
+            border-radius: 10px;
+            padding: 16px;
+            border: 1px solid var(--border);
+            white-space: pre-wrap;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            max-height: 600px;
+            overflow-y: auto;
+            color: var(--text);
+        }
     </style>
 </head>
 <body>
@@ -1106,12 +1146,14 @@
     <nav class="nav-bar">
         <button class="nav-item active" data-page="dashboard">📊 Tableau</button>
         <button class="nav-item" data-page="analyse">🧠 Analyse</button>
+        <button class="nav-item" data-page="prompts">📝 Prompts</button>
         <button class="nav-item" data-page="matchs">📋 Matchs analysés</button>
         <button class="nav-item" data-page="coupon">🎫 Coupon <span class="badge" id="couponBadge">0</span></button>
         <button class="nav-item" data-page="tracking">📊 Suivi</button>
         <button class="nav-item" data-page="results">📋 Résultats</button>
         <button class="nav-item" data-page="performance">📈 Performance</button>
         <button class="nav-item" data-page="import">📥 Importer</button>
+        <button class="nav-item" data-page="addmatch">➕ Ajouter match</button>
         <button class="nav-item" data-page="teams">🏷️ Équipes</button>
         <button class="nav-item" data-page="leagues">🏆 Ligues</button>
     </nav>
@@ -1158,6 +1200,7 @@
                 <div class="flex gap-1 flex-wrap">
                     <button class="btn btn-sm btn-secondary" onclick="App.clearAnalysis()">🔄 Effacer</button>
                     <button class="btn btn-sm btn-purple" onclick="App.toggleAdvancedMode()">🔬 Mode avancé</button>
+                    <button class="btn btn-sm btn-gold" onclick="App.generatePrompt()">📝 Générer Prompt</button>
                 </div>
             </div>
             <div class="sub-nav">
@@ -1308,6 +1351,21 @@
         </div>
     </section>
 
+    <!-- NOUVEAU : ONGLET PROMPTS -->
+    <section id="page-prompts" class="page hidden">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">📝 Générateur de Prompt pour l'IA externe</div>
+                <div class="flex gap-1 flex-wrap">
+                    <button class="btn btn-sm btn-primary" onclick="App.generatePrompt()">🔄 Générer</button>
+                    <button class="btn btn-sm btn-success" onclick="App.copyPrompt()">📋 Copier</button>
+                </div>
+            </div>
+            <p class="text-sub fs-06 mb-2">Le prompt ci-dessous est structuré selon les règles RED DATA. Copiez-le et envoyez-le à votre IA externe pour une analyse approfondie.</p>
+            <textarea id="promptOutput" readonly style="height:600px;font-family:'JetBrains Mono',monospace;font-size:0.7rem;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px;color:var(--text);"></textarea>
+        </div>
+    </section>
+
     <section id="page-matchs" class="page hidden">
         <div class="card">
             <div class="card-header">
@@ -1328,6 +1386,7 @@
                 <div class="flex gap-1 flex-wrap">
                     <button class="btn btn-sm btn-danger" onclick="App.clearCoupon()">🗑️ Vider</button>
                     <button class="btn btn-sm btn-success" onclick="App.validateCoupon()">✅ Valider le coupon</button>
+                    <button class="btn btn-sm btn-gold" onclick="App.showSpecialBetModal()">➕ Pari spécial</button>
                 </div>
             </div>
             <div id="couponList" class="scroll-table" style="max-height:300px;"></div>
@@ -1377,6 +1436,7 @@
                 <div class="flex gap-1 flex-wrap">
                     <button class="btn btn-sm btn-gold" onclick="App.openScoreFromTrackingManual()">➕ Ajouter pari terminé</button>
                     <button class="btn btn-sm btn-secondary" onclick="App.enterScoreForTracking()">⚽ Entrer score final</button>
+                    <button class="btn btn-sm btn-purple" onclick="App.validateSpecialBet()">✅ Valider pari spécial</button>
                 </div>
             </div>
             <div class="grid-4 text-center mb-2" style="background:var(--bg);padding:12px;border-radius:8px;">
@@ -1545,6 +1605,68 @@
         </div>
     </section>
 
+    <!-- NOUVEAU : ONGLET AJOUTER MATCH -->
+    <section id="page-addmatch" class="page hidden">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">➕ Ajouter un match manuellement</div>
+                <div class="flex gap-1 flex-wrap">
+                    <button class="btn btn-sm btn-primary" onclick="App.addMatchFromForm()">✅ Ajouter le match</button>
+                    <button class="btn btn-sm btn-secondary" onclick="App.refreshAllData()">🔄 Actualiser</button>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="team-input-wrapper">
+                    <div class="team-label"><span class="icon">🏠</span> Équipe domicile</div>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="addHome" placeholder="Nom de l'équipe" autocomplete="off" oninput="App.autocompleteTeam(this, 'addHome')" onfocus="App.autocompleteTeam(this, 'addHome')">
+                        <div class="autocomplete-dropdown hidden" id="addHomeDropdown"></div>
+                    </div>
+                </div>
+                <div class="team-input-wrapper">
+                    <div class="team-label"><span class="icon">✈️</span> Équipe extérieure</div>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="addAway" placeholder="Nom de l'équipe" autocomplete="off" oninput="App.autocompleteTeam(this, 'addAway')" onfocus="App.autocompleteTeam(this, 'addAway')">
+                        <div class="autocomplete-dropdown hidden" id="addAwayDropdown"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="grid-3 mt-1">
+                <div>
+                    <label class="text-sub fs-06">⚽ Buts domicile</label>
+                    <input type="number" id="addHG" min="0" value="0">
+                </div>
+                <div>
+                    <label class="text-sub fs-06">⚽ Buts extérieur</label>
+                    <input type="number" id="addAG" min="0" value="0">
+                </div>
+                <div>
+                    <label class="text-sub fs-06">📅 Date</label>
+                    <input type="date" id="addDate" value="">
+                </div>
+            </div>
+            <div class="mt-1">
+                <label class="text-sub fs-06">🏆 Ligue</label>
+                <div class="autocomplete-wrapper">
+                    <input type="text" id="addLeague" placeholder="Nom de la ligue" autocomplete="off" oninput="App.autocompleteLeague(this)" onfocus="App.autocompleteLeague(this)">
+                    <div class="autocomplete-dropdown hidden" id="addLeagueDropdown"></div>
+                </div>
+            </div>
+            <div class="mt-2 flex gap-2">
+                <button class="btn btn-primary" onclick="App.addMatchFromForm()">✅ Ajouter le match</button>
+                <button class="btn btn-secondary" onclick="App.clearAddMatchForm()">🗑️ Effacer</button>
+            </div>
+            <div id="addMatchStatus" class="mt-2 text-sub fs-06"></div>
+        </div>
+        <div class="card mt-2">
+            <div class="card-header">
+                <div class="card-title">📋 Derniers matchs ajoutés</div>
+                <button class="btn btn-sm btn-secondary" onclick="App.clearAddedMatches()">🗑️ Effacer tout</button>
+            </div>
+            <div id="recentMatchesList" class="scroll-table" style="max-height:400px;"></div>
+        </div>
+    </section>
+
     <section id="page-teams" class="page hidden">
         <div class="card">
             <div class="card-header">
@@ -1590,8 +1712,9 @@
                 <span class="text-sub fs-06" id="leaguesFilterCount"></span>
             </div>
             <div id="leaguesListContainer">
-                <div class="league-edit-row header" style="display:grid;grid-template-columns:1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;gap:6px;padding:6px 0;border-bottom:2px solid var(--cyan);font-size:0.55rem;font-weight:700;color:var(--cyan);">
-                    <span>Nom</span><span>Pays</span><span>Saison</span><span>Division</span><span>Strength</span><span>Elo Ref</span><span>Moy. Buts</span><span>Matchs</span><span>Actions</span>
+                <!-- Header avec 10 colonnes incluant Home Adv -->
+                <div class="league-edit-row header" style="display:grid;grid-template-columns:1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;gap:6px;padding:6px 0;border-bottom:2px solid var(--cyan);font-size:0.55rem;font-weight:700;color:var(--cyan);">
+                    <span>Nom</span><span>Pays</span><span>Saison</span><span>Division</span><span>Strength</span><span>Elo Ref</span><span>Home Adv</span><span>Moy. Buts</span><span>Matchs</span><span>Actions</span>
                 </div>
                 <div id="leaguesList" class="scroll-table" style="max-height:500px;"></div>
                 <div id="leaguesPagination" class="flex-between mt-2">
@@ -1639,6 +1762,55 @@
             <div class="flex gap-2 mt-2">
                 <button class="btn btn-success" onclick="App.addSelectionToCoupon()" style="flex:2;">✅ Ajouter</button>
                 <button class="btn btn-secondary" onclick="App.closeCouponModal()" style="flex:1;">❌ Annuler</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="specialBetModal" class="modal hidden">
+        <div class="modal-content" style="max-width:600px;">
+            <h2 class="text-gold fw-700">➕ Ajouter un pari spécial</h2>
+            <div class="text-sub fs-06 mb-2">Saisissez les détails du pari. Il devra être validé manuellement dans le suivi.</div>
+            <div class="grid-2">
+                <div class="team-input-wrapper">
+                    <div class="team-label"><span class="icon">🏠</span> Équipe domicile</div>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="specialHome" placeholder="Nom" autocomplete="off" oninput="App.autocompleteTeam(this, 'specialHome')" onfocus="App.autocompleteTeam(this, 'specialHome')">
+                        <div class="autocomplete-dropdown hidden" id="specialHomeDropdown"></div>
+                    </div>
+                </div>
+                <div class="team-input-wrapper">
+                    <div class="team-label"><span class="icon">✈️</span> Équipe extérieure</div>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="specialAway" placeholder="Nom" autocomplete="off" oninput="App.autocompleteTeam(this, 'specialAway')" onfocus="App.autocompleteTeam(this, 'specialAway')">
+                        <div class="autocomplete-dropdown hidden" id="specialAwayDropdown"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-1">
+                <label class="text-sub fs-06">📈 Marché (ex: "Liverpool marque", "Plus de 5 corners" etc.)</label>
+                <input type="text" id="specialMarket" placeholder="Marché spécifique">
+            </div>
+            <div class="grid-3 mt-1">
+                <div>
+                    <label class="text-sub fs-06">💰 Cote</label>
+                    <input type="number" id="specialOdds" step="0.01" min="1.01" value="1.50">
+                </div>
+                <div>
+                    <label class="text-sub fs-06">💵 Mise (CDF)</label>
+                    <input type="number" id="specialStake" step="1" min="1" value="100">
+                </div>
+                <div>
+                    <label class="text-sub fs-06">📅 Date</label>
+                    <input type="date" id="specialDate" value="">
+                </div>
+            </div>
+            <div class="mt-1">
+                <label class="text-sub fs-06">🏆 Ligue</label>
+                <input type="text" id="specialLeague" placeholder="Ligue (optionnel)">
+            </div>
+            <div class="flex gap-2 mt-2">
+                <button class="btn btn-success" onclick="App.addSpecialBet()" style="flex:2;">✅ Ajouter au coupon</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('specialBetModal').classList.add('hidden')" style="flex:1;">❌ Annuler</button>
             </div>
         </div>
     </div>
@@ -1842,7 +2014,7 @@ const DB = {
     async open() {
         if (this._db) return this._db;
         return new Promise((res, rej) => {
-            const req = indexedDB.open('RedProV25', 26);
+            const req = indexedDB.open('RedProV25', 28);
             req.onupgradeneeded = e => {
                 const db = e.target.result;
                 if (!db.objectStoreNames.contains('teams')) db.createObjectStore('teams', { keyPath: 'name' });
@@ -1881,6 +2053,11 @@ const DB = {
                 }
                 if (!db.objectStoreNames.contains('globalCalibration')) {
                     db.createObjectStore('globalCalibration', { keyPath: 'key' });
+                }
+                if (!db.objectStoreNames.contains('addedMatches')) {
+                    const s = db.createObjectStore('addedMatches', { keyPath: 'id', autoIncrement: true });
+                    s.createIndex('date', 'date', { unique: false });
+                    s.createIndex('league', 'league', { unique: false });
                 }
             };
             req.onsuccess = e => { this._db = e.target.result; res(this._db); };
@@ -1936,7 +2113,7 @@ const DB = {
     },
     async getAllMatches() { await this.open(); return new Promise(res => { const req = this._db.transaction('matches').objectStore('matches').getAll(); req.onsuccess = () => res(req.result || []); }); },
     async deleteMatch(id) { await this.open(); return new Promise(res => { const tx = this._db.transaction('matches', 'readwrite'); tx.objectStore('matches').delete(id); tx.oncomplete = () => res(); }); },
-    async deleteAllData() { await this.open(); return new Promise(res => { const tx = this._db.transaction(['teams','matches','tracking','leagues','calibrations','preferences','leagueAverages','capital','analysedMatches','coupon','results','marketResults','leagueStrengthConfig','leagueProfiles','modelPerformance','globalCalibration'], 'readwrite'); tx.objectStore('teams').clear(); tx.objectStore('matches').clear(); tx.objectStore('tracking').clear(); tx.objectStore('leagues').clear(); tx.objectStore('calibrations').clear(); tx.objectStore('preferences').clear(); tx.objectStore('leagueAverages').clear(); tx.objectStore('capital').clear(); tx.objectStore('analysedMatches').clear(); tx.objectStore('coupon').clear(); tx.objectStore('results').clear(); tx.objectStore('marketResults').clear(); tx.objectStore('leagueStrengthConfig').clear(); tx.objectStore('leagueProfiles').clear(); tx.objectStore('modelPerformance').clear(); tx.objectStore('globalCalibration').clear(); tx.oncomplete = () => res(); }); },
+    async deleteAllData() { await this.open(); return new Promise(res => { const tx = this._db.transaction(['teams','matches','tracking','leagues','calibrations','preferences','leagueAverages','capital','analysedMatches','coupon','results','marketResults','leagueStrengthConfig','leagueProfiles','modelPerformance','globalCalibration','addedMatches'], 'readwrite'); tx.objectStore('teams').clear(); tx.objectStore('matches').clear(); tx.objectStore('tracking').clear(); tx.objectStore('leagues').clear(); tx.objectStore('calibrations').clear(); tx.objectStore('preferences').clear(); tx.objectStore('leagueAverages').clear(); tx.objectStore('capital').clear(); tx.objectStore('analysedMatches').clear(); tx.objectStore('coupon').clear(); tx.objectStore('results').clear(); tx.objectStore('marketResults').clear(); tx.objectStore('leagueStrengthConfig').clear(); tx.objectStore('leagueProfiles').clear(); tx.objectStore('modelPerformance').clear(); tx.objectStore('globalCalibration').clear(); tx.objectStore('addedMatches').clear(); tx.oncomplete = () => res(); }); },
     async saveTracking(entry) { await this.open(); return new Promise(res => { const tx = this._db.transaction('tracking', 'readwrite'); const store = tx.objectStore('tracking'); const { id, ...clean } = entry; if (!clean.result) clean.result = 'pending'; if (!clean.profit) clean.profit = 0; if (!clean.type) clean.type = 'single'; if (!clean.status) clean.status = 'active'; const req = store.add(clean); req.onsuccess = () => res(req.result); }); },
     async getAllTracking() { await this.open(); return new Promise(res => { const req = this._db.transaction('tracking').objectStore('tracking').getAll(); req.onsuccess = () => res(req.result || []); }); },
     async updateTracking(id, updates) { await this.open(); return new Promise(res => { const tx = this._db.transaction('tracking', 'readwrite'); const store = tx.objectStore('tracking'); const req = store.get(id); req.onsuccess = () => { const entry = req.result; if (entry) { Object.assign(entry, updates); store.put(entry); } }; tx.oncomplete = () => res(); }); },
@@ -1975,11 +2152,16 @@ const DB = {
     async getAllModelPerformance() { await this.open(); return new Promise(res => { const req = this._db.transaction('modelPerformance').objectStore('modelPerformance').getAll(); req.onsuccess = () => res(req.result || []); }); },
     async clearModelPerformance() { await this.open(); return new Promise(res => { const tx = this._db.transaction('modelPerformance', 'readwrite'); tx.objectStore('modelPerformance').clear(); tx.oncomplete = () => res(); }); },
     async saveGlobalCalibration(key, value) { await this.open(); return new Promise(res => { const tx = this._db.transaction('globalCalibration', 'readwrite'); tx.objectStore('globalCalibration').put({ key, value }); tx.oncomplete = () => res(); }); },
-    async getGlobalCalibration(key) { await this.open(); return new Promise(res => { const req = this._db.transaction('globalCalibration').objectStore('globalCalibration').get(key); req.onsuccess = () => res(req.result?.value || null); }); }
+    async getGlobalCalibration(key) { await this.open(); return new Promise(res => { const req = this._db.transaction('globalCalibration').objectStore('globalCalibration').get(key); req.onsuccess = () => res(req.result?.value || null); }); },
+    // addedMatches
+    async saveAddedMatch(match) { await this.open(); return new Promise(res => { const tx = this._db.transaction('addedMatches', 'readwrite'); const store = tx.objectStore('addedMatches'); const { id, ...clean } = match; const req = store.add(clean); req.onsuccess = () => res(req.result); }); },
+    async getAllAddedMatches() { await this.open(); return new Promise(res => { const req = this._db.transaction('addedMatches').objectStore('addedMatches').getAll(); req.onsuccess = () => res(req.result || []); }); },
+    async deleteAddedMatch(id) { await this.open(); return new Promise(res => { const tx = this._db.transaction('addedMatches', 'readwrite'); tx.objectStore('addedMatches').delete(id); tx.oncomplete = () => res(); }); },
+    async clearAddedMatches() { await this.open(); return new Promise(res => { const tx = this._db.transaction('addedMatches', 'readwrite'); tx.objectStore('addedMatches').clear(); tx.oncomplete = () => res(); }); }
 };
 
 // ============================================================
-// 3. COLUMN_MAPPING
+// 3. COLUMN_MAPPING (inchangé)
 // ============================================================
 const COLUMN_MAPPING = {
     country: ['Country', 'country', 'Pays', 'Nation', 'nation'],
@@ -2021,7 +2203,7 @@ function findColumn(headers, possibleNames) {
 }
 
 // ============================================================
-// 4. PROFIL DE LIGUE
+// 4. PROFIL DE LIGUE (inchangé)
 // ============================================================
 const LeagueProfileEngine = {
     async computeProfile(leagueName, matches) {
@@ -2080,7 +2262,7 @@ const LeagueProfileEngine = {
 };
 
 // ============================================================
-// 5. PERFORMANCE DES MODÈLES
+// 5. PERFORMANCE DES MODÈLES (inchangé)
 // ============================================================
 const ModelPerformanceEngine = {
     modelNames: ['elo', 'poisson', 'dixonColes', 'monteCarlo', 'form', 'offDef', 'h2h'],
@@ -2217,7 +2399,7 @@ const ModelPerformanceEngine = {
 };
 
 // ============================================================
-// 6. MOTEUR DE CALCUL V25 (EngineV22)
+// 6. MOTEUR DE CALCUL V25 (EngineV22 - inchangé, avec prise en compte de homeAdv)
 // ============================================================
 const EngineV22 = {
     maxGoals: 10,
@@ -2295,8 +2477,9 @@ const EngineV22 = {
                 const hg = match.FTHG || 0, ag = match.FTAG || 0;
                 const league = match.league || match.div || 'default';
                 const profile = await DB.getLeagueProfile(league);
-                const homeAdvBonus = profile ? (profile.homeWinPct - profile.awayWinPct) * 100 + 40 : 80;
-                const expectedHome = 1 / (1 + Math.pow(10, (eloAway - (eloHome + homeAdvBonus)) / 400));
+                const leagueConfig = await DB.getLeague(league);
+                const homeAdv = leagueConfig?.homeAdv || (profile ? (profile.homeWinPct - profile.awayWinPct) * 100 + 40 : 80);
+                const expectedHome = 1 / (1 + Math.pow(10, (eloAway - (eloHome + homeAdv)) / 400));
                 const expectedAway = 1 - expectedHome;
                 let sHome, sAway;
                 if (hg > ag) { sHome = 1; sAway = 0; }
@@ -2685,6 +2868,12 @@ const EngineV22 = {
             homeAdv = Math.max(20, Math.min(80, homeAdv));
         }
 
+        // Récupérer la configuration de la ligue pour homeAdv personnalisé
+        const leagueConfig = await DB.getLeague(league);
+        if (leagueConfig && leagueConfig.homeAdv) {
+            homeAdv = leagueConfig.homeAdv;
+        }
+
         const { lA, lB } = this._computeLambdas({ xG: hXG, xGA: hXGA }, { xG: aXG, xGA: aXGA }, terrain, homeAdv, 1.0);
 
         const poisson = this._analyticalDerivedProbs(lA, lB);
@@ -2902,7 +3091,7 @@ const EngineV22 = {
 };
 
 // ============================================================
-// 7. XG ENGINE — CORRECTION (mise à jour uniquement des équipes ayant joué)
+// 7. XG ENGINE (inchangé)
 // ============================================================
 const xGEngine = {
     recalculateAllXG(matches, teams) {
@@ -2977,7 +3166,7 @@ const xGEngine = {
 };
 
 // ============================================================
-// 8. MARKET CALCULATOR
+// 8. MARKET CALCULATOR (inchangé)
 // ============================================================
 const MarketCalculator = {
     calculate(matchData, marketKey, betInfo) {
@@ -3018,10 +3207,9 @@ const MarketCalculator = {
 };
 
 // ============================================================
-// 9. APPLICATION (App)
+// 9. APPLICATION (App) — avec toutes les améliorations
 // ============================================================
 const App = {
-    // --- Propriétés ---
     teams: [],
     matches: [],
     trackingData: [],
@@ -3198,6 +3386,7 @@ const App = {
             this.renderCurrentPage();
             this.updateCouponBadge();
             this._updateEditableFields();
+            this.renderRecentMatches();
             showToast('✅ Toutes les données synchronisées', 'success');
         } catch (e) {
             console.error('Erreur refreshAllData:', e);
@@ -3231,12 +3420,14 @@ const App = {
         const pages = {
             'dashboard': () => this.renderDashboard(),
             'analyse': () => { this.populateSelectors(); this.renderHistory(); this._updateEditableFields(); },
+            'prompts': () => {},
             'matchs': () => this.renderAnalysedMatches(),
             'coupon': () => this.renderCoupon(),
             'tracking': () => { this.renderTracking(); this.renderCapitalPage(); },
             'results': () => this.renderResults(),
             'performance': () => this.renderPerformance(),
             'import': () => {},
+            'addmatch': () => this.renderRecentMatches(),
             'teams': () => this.renderTeams(),
             'leagues': () => this.renderLeagues()
         };
@@ -3432,8 +3623,36 @@ const App = {
         };
     },
 
+    // Autocomplete pour les ligues (pour l'ajout de match)
+    autocompleteLeague(input) {
+        const dd = document.getElementById('addLeagueDropdown');
+        const q = input.value.trim().toLowerCase();
+        if (q.length < 1) { dd.classList.add('hidden'); return; }
+        const matches = this.leagues.filter(l => l.name && l.name.toLowerCase().includes(q)).slice(0, 10);
+        if (matches.length === 0) { dd.classList.add('hidden'); return; }
+        dd.innerHTML = matches.map(l =>
+            `<div class="autocomplete-item" data-name="${Utils.escapeJS(l.name)}">${Utils.escapeHTML(l.name)}</div>`
+        ).join('');
+        dd.classList.remove('hidden');
+        dd.querySelectorAll('.autocomplete-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const name = item.dataset.name;
+                if (name) { input.value = name; dd.classList.add('hidden'); }
+            });
+        });
+        input.onkeydown = (e) => {
+            if (e.key === 'Escape') dd.classList.add('hidden');
+        };
+    },
+
     selectTeam(side, name) {
-        document.getElementById(`analysis${side === 'home' ? 'Home' : 'Away'}`).value = name;
+        const prefix = (side === 'home' || side === 'addHome') ? 'analysis' : 'analysis';
+        const realSide = side.startsWith('add') ? side : (side === 'home' ? 'Home' : 'Away');
+        if (side === 'addHome' || side === 'addAway' || side === 'specialHome' || side === 'specialAway') {
+            document.getElementById(side).value = name;
+        } else {
+            document.getElementById(`analysis${realSide}`).value = name;
+        }
         document.getElementById(`${side}Dropdown`).classList.add('hidden');
         this._updateEditableFields();
     },
@@ -4169,6 +4388,562 @@ const App = {
         }
     },
 
+    // --- Génération du prompt (Amélioration 1) ---
+    generatePrompt() {
+        if (!this._lastAnalysisResult) {
+            showToast('Aucune analyse disponible. Lancez une analyse d\'abord.', 'error');
+            return;
+        }
+        const result = this._lastAnalysisResult;
+        const home = document.getElementById('analysisHome').value.trim();
+        const away = document.getElementById('analysisAway').value.trim();
+        const league = document.getElementById('analysisLeagueFilter').value || 'Inconnu';
+        const terrain = document.getElementById('terrainHome').value === 'neutral' ? 'Neutre' : 
+                        (document.getElementById('terrainHome').value === 'home' ? 'Domicile' : 'Extérieur');
+        const date = new Date().toISOString().slice(0, 10);
+
+        const p = result.probabilities;
+        const hT = this.teams.find(t => t.name === home);
+        const aT = this.teams.find(t => t.name === away);
+
+        const formHome = result.formHome || { points: 0.5, trend: 'stable' };
+        const formAway = result.formAway || { points: 0.5, trend: 'stable' };
+        const hElo = hT?.elo || 1500;
+        const aElo = aT?.elo || 1500;
+        const hXG = hT?.xG || 1.0;
+        const aXG = aT?.xG || 1.0;
+        const hXGA = hT?.xGA || 1.0;
+        const aXGA = aT?.xGA || 1.0;
+        const hSeasons = hT?.seasons ? Object.keys(hT.seasons).length : 0;
+        const aSeasons = aT?.seasons ? Object.keys(aT.seasons).length : 0;
+        const hMatches = hT?.matches || 0;
+        const aMatches = aT?.matches || 0;
+
+        // Récupération des stats détaillées si disponibles
+        const hStats = hT?.stats || {};
+        const aStats = aT?.stats || {};
+        const hGoalsFor = hT?.goalsScored || 0;
+        const hGoalsAgainst = hT?.goalsConceded || 0;
+        const aGoalsFor = aT?.goalsScored || 0;
+        const aGoalsAgainst = aT?.goalsConceded || 0;
+        const hForm = hT?.formLast5 || ['D','D','D','D','D'];
+        const aForm = aT?.formLast5 || ['D','D','D','D','D'];
+        const hFormText = hForm.map((r, i) => `  ${i+1}. ${r === 'W' ? 'Victoire' : r === 'D' ? 'Nul' : 'Défaite'}`).join('\n');
+        const aFormText = aForm.map((r, i) => `  ${i+1}. ${r === 'W' ? 'Victoire' : r === 'D' ? 'Nul' : 'Défaite'}`).join('\n');
+
+        // Récupération des données H2H depuis le résultat de l'analyse
+        const h2hMatches = result.h2hMatches || [];
+        const h2hDataDisplay = result.h2hDataDisplay || 'Aucune donnée H2H disponible';
+
+        // Construction du prompt
+        let prompt = `Tu es l’analyste football externe de RED DATA.
+
+Tu reçois une base de données statistique calculée localement par RED DATA. Ton rôle est de compléter, vérifier, contextualiser et analyser ces données avec les informations accessibles sur Internet.
+
+1. RÈGLES ABSOLUES
+
+* Les données fournies par RED DATA sont les données de référence.
+* Ne remplace jamais une donnée locale par une donnée inventée mais si tu trouves à l’internet dans un site officiel ou fiable tu ajoutes.
+* Distingue clairement :
+    * OBSERVÉ = donnée fournie ou vérifiable ;
+    * ESTIMÉ = donnée calculée par RED DATA ou estimée à partir de moyennes ;
+    * VÉRIFIÉ INTERNET = information actuelle trouvée sur une source externe ;
+    * NON VÉRIFIÉ = information impossible à confirmer.
+* Si les tirs, tirs cadrés, corners, cartons, possession, xG, etc. sont absents, tu peux les compléter uniquement avec des estimations raisonnables basées sur les données disponibles.
+* Ne présente jamais une estimation comme une statistique observée.
+* Vérifie les informations actuelles lorsque possible :
+    * blessures ;
+    * suspensions ;
+    * compositions probables ;
+    * joueurs absents ;
+    * rotation ;
+    * calendrier ;
+    * fatigue ;
+    * nombre de jours de repos ;
+    * déplacements ;
+    * enjeu du match ;
+    * motivation ;
+    * forme récente ;
+    * changement d’entraîneur ;
+    * contexte particulier.
+* Si une information actuelle n’est pas vérifiable, écris « information non vérifiée ».
+* Ne fabrique jamais une cote bookmaker.
+* Ne fabrique jamais une absence ou une composition.
+* Ne transforme jamais une probabilité en certitude.
+* Une cote fair doit être calculée à partir de la probabilité finale :
+    cote fair = 1 / probabilité décimale.
+
+⸻
+
+2. DONNÉES RED DATA
+
+=== MATCH ===
+
+Compétition : ${league}
+Date : ${date}
+Heure : (à préciser)
+Terrain : ${terrain}
+Qualité globale des données : ${Math.round(result.confidence)}/100
+
+=== ÉQUIPE DOMICILE ===
+
+Nom : ${home}
+
+Elo : ${Math.round(hElo)}
+xG : ${hXG.toFixed(2)}
+xGA : ${hXGA.toFixed(2)}
+Matchs disponibles : ${hMatches} (${hSeasons} saisons)
+
+Forme récente (5 derniers matchs) :
+${hFormText}
+
+Statistiques totales (tous matchs) :
+Matchs : ${hMatches}
+Buts marqués : ${hGoalsFor}
+Buts encaissés : ${hGoalsAgainst}
+Victoires : ${hForm.filter(r => r === 'W').length}
+Nuls : ${hForm.filter(r => r === 'D').length}
+Défaites : ${hForm.filter(r => r === 'L').length}
+
+Statistiques avancées (si disponibles) :
+- Possession : ${hStats.possession ? `${hStats.possession.toFixed(1)}%` : 'N/A'}
+- PPDA : ${hStats.ppda ? hStats.ppda.toFixed(2) : 'N/A'}
+- PPDA subi : ${hStats.ppda_allowed ? hStats.ppda_allowed.toFixed(2) : 'N/A'}
+- Deep entries : ${hStats.deep ? hStats.deep.toFixed(1) : 'N/A'}
+- Deep entries subies : ${hStats.deep_allowed ? hStats.deep_allowed.toFixed(1) : 'N/A'}
+- Tirs cadrés / match : ${hStats.shotsOnTargetPerMatch ? hStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
+- Tirs / match : ${hStats.shots ? hStats.shots.toFixed(1) : 'N/A'}
+
+=== ÉQUIPE EXTÉRIEURE ===
+
+Nom : ${away}
+
+Elo : ${Math.round(aElo)}
+xG : ${aXG.toFixed(2)}
+xGA : ${aXGA.toFixed(2)}
+Matchs disponibles : ${aMatches} (${aSeasons} saisons)
+
+Forme récente (5 derniers matchs) :
+${aFormText}
+
+Statistiques totales (tous matchs) :
+Matchs : ${aMatches}
+Buts marqués : ${aGoalsFor}
+Buts encaissés : ${aGoalsAgainst}
+Victoires : ${aForm.filter(r => r === 'W').length}
+Nuls : ${aForm.filter(r => r === 'D').length}
+Défaites : ${aForm.filter(r => r === 'L').length}
+
+Statistiques avancées (si disponibles) :
+- Possession : ${aStats.possession ? `${aStats.possession.toFixed(1)}%` : 'N/A'}
+- PPDA : ${aStats.ppda ? aStats.ppda.toFixed(2) : 'N/A'}
+- PPDA subi : ${aStats.ppda_allowed ? aStats.ppda_allowed.toFixed(2) : 'N/A'}
+- Deep entries : ${aStats.deep ? aStats.deep.toFixed(1) : 'N/A'}
+- Deep entries subies : ${aStats.deep_allowed ? aStats.deep_allowed.toFixed(1) : 'N/A'}
+- Tirs cadrés / match : ${aStats.shotsOnTargetPerMatch ? aStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
+- Tirs / match : ${aStats.shots ? aStats.shots.toFixed(1) : 'N/A'}
+
+⸻
+
+3. DONNÉES DÉTAILLÉES
+
+Tirs :
+Domicile : ${hStats.shots ? hStats.shots.toFixed(1) : 'N/A'}
+Extérieur : ${aStats.shots ? aStats.shots.toFixed(1) : 'N/A'}
+
+Tirs cadrés :
+Domicile : ${hStats.shotsOnTargetPerMatch ? hStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
+Extérieur : ${aStats.shotsOnTargetPerMatch ? aStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A'}
+
+Corners : ${hStats.corners ? `${hStats.corners.toFixed(1)} (dom)` : 'N/A'} / ${aStats.corners ? `${aStats.corners.toFixed(1)} (ext)` : 'N/A'}
+Cartons : ${hStats.cards ? `${hStats.cards.toFixed(1)} (dom)` : 'N/A'} / ${aStats.cards ? `${aStats.cards.toFixed(1)} (ext)` : 'N/A'}
+
+Possession : ${hStats.possession ? `${hStats.possession.toFixed(1)}% (domicile)` : 'N/A'} / ${aStats.possession ? `${aStats.possession.toFixed(1)}% (extérieur)` : 'N/A'}
+
+Autres statistiques disponibles :
+${hT?.statsImported ? '📊 Statistiques importées (JSON) disponibles' : '📋 Statistiques issues des matchs CSV'}
+${aT?.statsImported ? '📊 Statistiques importées (JSON) disponibles' : '📋 Statistiques issues des matchs CSV'}
+
+⸻
+
+4. MODÈLES RED DATA
+
+Lambda domicile : ${result.lambdas.lA.toFixed(2)}
+Lambda extérieur : ${result.lambdas.lB.toFixed(2)}
+
+Elo :
+1 : ${(result.modelPredictions?.elo?.p1 * 100 || 0).toFixed(1)}%
+X : ${(result.modelPredictions?.elo?.pX * 100 || 0).toFixed(1)}%
+2 : ${(result.modelPredictions?.elo?.p2 * 100 || 0).toFixed(1)}%
+
+Poisson / Dixon-Coles :
+1 : ${(result.modelPredictions?.dixonColes?.p1 * 100 || 0).toFixed(1)}%
+X : ${(result.modelPredictions?.dixonColes?.pX * 100 || 0).toFixed(1)}%
+2 : ${(result.modelPredictions?.dixonColes?.p2 * 100 || 0).toFixed(1)}%
+
+Monte Carlo :
+1 : ${(result.modelPredictions?.monteCarlo?.p1 * 100 || 0).toFixed(1)}%
+X : ${(result.modelPredictions?.monteCarlo?.pX * 100 || 0).toFixed(1)}%
+2 : ${(result.modelPredictions?.monteCarlo?.p2 * 100 || 0).toFixed(1)}%
+
+Nombre de simulations : 100 000
+
+Forme pondérée :
+1 : ${(result.modelPredictions?.form?.p1 * 100 || 0).toFixed(1)}%
+X : ${(result.modelPredictions?.form?.pX * 100 || 0).toFixed(1)}%
+2 : ${(result.modelPredictions?.form?.p2 * 100 || 0).toFixed(1)}%
+
+Ensemble RED DATA :
+1 : ${(p.p1 * 100).toFixed(1)}%
+X : ${(p.pX * 100).toFixed(1)}%
+2 : ${(p.p2 * 100).toFixed(1)}%
+
+BTTS :
+Oui : ${(result.markets?.BTTS * 100 || 0).toFixed(1)}%
+Non : ${((1 - (result.markets?.BTTS || 0)) * 100).toFixed(1)}%
+
+Buts :
+Over 0.5 : ${(result.valueBets?.find(v => v.key === 'over0.5')?.modelProb * 100 || 0).toFixed(1)}%
+Over 1.5 : ${(result.valueBets?.find(v => v.key === 'over1.5')?.modelProb * 100 || 0).toFixed(1)}%
+Over 2.5 : ${(result.markets?.Over25 * 100 || 0).toFixed(1)}%
+Over 3.5 : ${(result.valueBets?.find(v => v.key === 'over3.5')?.modelProb * 100 || 0).toFixed(1)}%
+Over 4.5 : ${(result.valueBets?.find(v => v.key === 'over4.5')?.modelProb * 100 || 0).toFixed(1)}%
+
+Autres probabilités calculées :
+${result.valueBets?.filter(v => v.category !== 'main').slice(0, 5).map(v => `${v.market} : ${(v.modelProb * 100).toFixed(1)}%`).join('\n') || 'Aucune autre'}
+
+⸻
+
+5. H2H ET BASE HISTORIQUE
+
+H2H disponible : ${result.h2hUsed ? 'OUI' : 'NON'}
+
+Historique des confrontations :
+${h2hMatches.length > 0 ? h2hMatches.map(m => `  ${m.date} : ${m.homeTeam} ${m.FTHG}-${m.FTAG} ${m.awayTeam}`).join('\n') : h2hDataDisplay}
+
+Statistiques H2H :
+- Matchs : ${h2hMatches.length}
+- Victoires domicile : ${h2hMatches.filter(m => m.homeTeam === home && m.FTHG > m.FTAG).length}
+- Victoires extérieur : ${h2hMatches.filter(m => m.homeTeam === away && m.FTAG > m.FTHG).length}
+- Nuls : ${h2hMatches.filter(m => m.FTHG === m.FTAG).length}
+- Buts marqués par ${home} : ${h2hMatches.reduce((s, m) => s + (m.homeTeam === home ? m.FTHG : m.FTAG), 0)}
+- Buts marqués par ${away} : ${h2hMatches.reduce((s, m) => s + (m.homeTeam === away ? m.FTHG : m.FTAG), 0)}
+- Moyenne de buts : ${h2hMatches.length > 0 ? (h2hMatches.reduce((s, m) => s + m.FTHG + m.FTAG, 0) / h2hMatches.length).toFixed(2) : 'N/A'}
+
+⸻
+
+6. COMPLÉMENT INTERNET
+
+Maintenant, vérifie les informations actuelles disponibles sur Internet.
+
+Recherche notamment :
+
+Effectifs
+
+* blessures ;
+* suspensions ;
+* joueurs incertains ;
+* retours ;
+* rotations ;
+* compositions probables.
+
+Contexte
+
+* enjeu du classement ;
+* qualification ;
+* maintien ;
+* titre ;
+* coupe ;
+* derby ;
+* rivalité ;
+* motivation ;
+* changement d’entraîneur.
+
+Calendrier
+
+* matchs précédents ;
+* prochains matchs ;
+* jours de repos ;
+* déplacement récent ;
+* voyage ;
+* fatigue potentielle.
+
+Forme actuelle
+
+* derniers matchs ;
+* buts marqués/encaissés ;
+* performances domicile/extérieur ;
+* tendance offensive ;
+* tendance défensive.
+
+Pour chaque information importante, indique si elle est :
+
+VÉRIFIÉE / NON VÉRIFIÉE
+
+Ne fabrique aucune information.
+
+⸻
+
+7. ANALYSE DES CONFLITS
+
+Compare les données RED DATA avec les informations Internet.
+
+Identifie :
+
+* modèles en accord ;
+* modèles en conflit ;
+* statistiques insuffisantes ;
+* statistiques estimées ;
+* contexte pouvant modifier l’analyse ;
+* marché dont la fiabilité est faible.
+
+Explique clairement pourquoi une probabilité peut être augmentée ou diminuée.
+
+Ne modifie pas arbitrairement les probabilités.
+
+⸻
+
+8. RECHERCHE DE MARCHÉS SPÉCIFIQUES
+
+Ne te limite PAS au 1X2, Over/Under et BTTS.
+
+Cherche des marchés statistiques intéressants et inhabituels lorsque les données permettent raisonnablement de les analyser.
+
+Exemples :
+
+TEMPS DE JEU
+
+* Aucun but dans les 5 premières minutes
+* Aucun but dans les 10 premières minutes
+* Aucun but dans les 15 premières minutes
+* Over 0.5 but dans les 15 premières minutes
+* Over 0.5 but en première mi-temps
+* Aucun but en première mi-temps
+* But dans les 15 dernières minutes
+* But après la 75e minute
+
+BUTS
+
+* équipe domicile marque ;
+* équipe extérieure marque ;
+* équipe domicile marque 2+ buts ;
+* équipe extérieure marque 2+ buts ;
+* une équipe marque dans les deux mi-temps ;
+* une équipe ne marque dans aucune mi-temps ;
+* les deux équipes marquent en première mi-temps ;
+* les deux équipes marquent en seconde mi-temps ;
+* équipe gagnante sans encaisser ;
+* équipe perdante mais marque ;
+* exactement 1 / 2 / 3 / 4 buts ;
+* intervalle de buts.
+
+TIRS
+
+Lorsque les données sont suffisamment fiables :
+
+* tirs totaux ;
+* tirs domicile ;
+* tirs extérieur ;
+* tirs cadrés totaux ;
+* tirs cadrés domicile ;
+* tirs cadrés extérieur ;
+* équipe avec le plus de tirs ;
+* équipe avec le plus de tirs cadrés.
+
+CORNERS
+
+* corners totaux ;
+* corners domicile ;
+* corners extérieur ;
+* équipe avec le plus de corners ;
+* Over/Under corners ;
+* corners en première mi-temps.
+
+CARTONS
+
+Si les données sont suffisamment fiables :
+
+* cartons totaux ;
+* cartons domicile ;
+* cartons extérieur ;
+* équipe avec le plus de cartons ;
+* Over/Under cartons.
+
+JOUEURS
+
+Uniquement si les compositions probables et les informations nécessaires sont suffisamment fiables :
+
+* joueur susceptible de marquer ;
+* joueur susceptible de marquer 2+ buts ;
+* joueur susceptible de réaliser un doublé ;
+* joueur susceptible de cadrer au moins un tir ;
+* joueur susceptible de cadrer plusieurs tirs ;
+* joueur susceptible d’être averti.
+
+Si le joueur n’est pas suffisamment susceptible de jouer, ne propose pas le marché.
+
+SCÉNARIOS DE MATCH
+
+Analyse également :
+
+* équipe qui marque en premier ;
+* équipe qui marque en dernier ;
+* équipe qui mène à la mi-temps ;
+* équipe qui gagne une mi-temps ;
+* équipe qui gagne les deux mi-temps ;
+* équipe qui marque après avoir encaissé ;
+* buts consécutifs de la même équipe ;
+* une équipe marque 2 buts consécutifs ;
+* aucune équipe ne marque deux fois consécutivement ;
+* comeback potentiel ;
+* clean sheet.
+
+⸻
+
+9. MARCHÉS TRÈS SPÉCIFIQUES
+
+Tu peux également rechercher des événements rares comme :
+
+* aucun but dans les 15 premières minutes ;
+* aucun but dans les 30 premières minutes ;
+* au moins un but dans chaque mi-temps ;
+* une équipe marque deux buts consécutifs ;
+* une équipe marque dans les deux mi-temps ;
+* une équipe marque après avoir encaissé ;
+* un joueur réalise un doublé ;
+* aucun joueur ne réalise de doublé ;
+* but depuis l’extérieur de la surface ;
+* aucun but depuis l’extérieur de la surface ;
+* au moins un tir cadré dans une période ;
+* aucune équipe ne marque dans les 10 premières minutes.
+
+ATTENTION :
+
+Plus un événement est rare ou difficile à modéliser, plus le niveau de confiance doit être faible.
+
+Ne transforme jamais une probabilité faible en recommandation simplement parce que la cote fair est élevée.
+
+⸻
+
+10. PROBABILITÉS FINALES
+
+Pour chaque marché retenu, donne :
+
+Marché	Probabilité	Cote fair	Cote minimale acceptable	Confiance
+${result.valueBets?.filter(v => v.fairOdd > 1.25).slice(0, 10).map(v => `${v.market}\t${(v.modelProb*100).toFixed(1)}%\t${v.fairOdd.toFixed(2)}\t${(v.fairOdd * 0.85).toFixed(2)}\t${v.confidence >= 70 ? 'Forte' : v.confidence >= 50 ? 'Moyenne' : 'Faible'}`).join('\n') || 'Aucun marché retenu'}
+
+Calcul :
+
+Cote fair = 1 / probabilité
+
+Exemple :
+
+Probabilité = 75%
+
+Cote fair = 1 / 0,75 = 1,33
+
+La cote minimale acceptable doit intégrer une marge de sécurité liée à :
+
+* qualité des données ;
+* incertitude ;
+* événements rares ;
+* données estimées ;
+* informations non vérifiées.
+
+⸻
+
+11. CLASSEMENT DES OPPORTUNITÉS
+
+Classe les marchés en 4 catégories :
+
+🟢 TRÈS SOLIDE
+
+Probabilité élevée + données fiables + contexte cohérent.
+
+🟡 INTÉRESSANT
+
+Probabilité correcte mais incertitude modérée.
+
+🟠 SPÉCULATIF
+
+Événement plus difficile à prévoir ou données insuffisantes.
+
+🔴 À ÉVITER
+
+Probabilité trop faible, données insuffisantes ou conflit important entre les modèles.
+
+⸻
+
+12. TOP SÉLECTIONS
+
+Donne au maximum 10 sélections.
+
+Pour chacune :
+
+Marché :
+Probabilité finale :
+Cote fair :
+Cote minimale acceptable :
+Confiance :
+Données utilisées :
+Données estimées :
+Informations Internet vérifiées :
+Justification :
+Risque principal :
+
+⸻
+
+13. CONCLUSION
+
+Termine obligatoirement par :
+
+🏆 MEILLEURE SÉLECTION STATISTIQUE
+
+${result.hotPick ? result.hotPick.market : 'Aucune sélection'}
+
+📊 PROBABILITÉ
+
+${result.hotPick ? (result.hotPick.modelProb*100).toFixed(1) : 'N/A'}%
+
+💰 COTE FAIR
+
+${result.hotPick ? result.hotPick.fairOdd.toFixed(2) : 'N/A'}
+
+🛡️ NIVEAU DE CONFIANCE
+
+${result.hotPick ? (result.hotPick.confidence >= 70 ? 'Forte' : result.hotPick.confidence >= 50 ? 'Moyenne' : 'Faible') : 'N/A'}
+
+⚠️ PRINCIPAL RISQUE
+
+${result.isTrap ? result.trapMessage : 'Risque modéré - surveiller les compositions'}
+
+🔎 QUALITÉ DES DONNÉES
+
+${Math.round(result.confidence)}/100
+
+Puis indique :
+
+« Cette analyse est une estimation probabiliste et non une certitude. »
+
+Ne sélectionne jamais un marché uniquement parce que sa probabilité est supérieure à 65 %. La qualité des données, la cohérence des modèles et le contexte doivent également être favorables.`;
+
+        document.getElementById('promptOutput').value = prompt;
+        showToast('✅ Prompt généré', 'success');
+        // Naviguer vers l'onglet prompts
+        this.navigateTo('prompts');
+    },
+
+    copyPrompt() {
+        const textarea = document.getElementById('promptOutput');
+        textarea.select();
+        navigator.clipboard.writeText(textarea.value).then(() => {
+            showToast('📋 Prompt copié dans le presse-papier', 'success');
+        }).catch(() => {
+            document.execCommand('copy');
+            showToast('📋 Prompt copié', 'success');
+        });
+    },
+
     // --- Gestion du coupon ---
     async saveCouponToDB() {
         try {
@@ -4192,12 +4967,14 @@ const App = {
                 <div class="match-info">
                     <div class="teams">${Utils.escapeHTML(c.homeTeam)} vs ${Utils.escapeHTML(c.awayTeam)}</div>
                     <div class="details">
-                        <span class="market">${Utils.escapeHTML(c.league)}</span>
+                        <span class="market">${Utils.escapeHTML(c.league || '')}</span>
                         <span class="market">${Utils.escapeHTML(c.market)}</span>
-                        <span class="odd">${c.odd.toFixed(2)}</span>
+                        <span class="odd">${c.odd?.toFixed(2) || '?'}</span>
                         <span>Prob: ${(c.prob*100).toFixed(1)}%</span>
-                        <span class="text-green">Edge: +${(c.edge*100).toFixed(1)}%</span>
+                        <span class="text-green">Edge: ${(c.edge*100).toFixed(1)}%</span>
                         <span class="text-cyan">Fair: ${(c.fairOdd || 0).toFixed(2)}</span>
+                        ${c.special ? '<span class="badge badge-gold">Spécial</span>' : ''}
+                        ${c.manualValidation ? '<span class="badge badge-cyan">Manuel</span>' : ''}
                     </div>
                 </div>
                 <div class="actions">
@@ -4333,9 +5110,432 @@ const App = {
         }
     },
 
+    // --- Paris spéciaux (Amélioration 2) ---
+    showSpecialBetModal() {
+        document.getElementById('specialBetModal').classList.remove('hidden');
+        // Remplir la date par défaut
+        document.getElementById('specialDate').value = new Date().toISOString().slice(0, 10);
+        // Effacer les champs précédents
+        document.getElementById('specialHome').value = '';
+        document.getElementById('specialAway').value = '';
+        document.getElementById('specialMarket').value = '';
+        document.getElementById('specialOdds').value = '1.50';
+        document.getElementById('specialStake').value = '100';
+        document.getElementById('specialLeague').value = '';
+    },
+
+    async addSpecialBet() {
+        const home = document.getElementById('specialHome').value.trim();
+        const away = document.getElementById('specialAway').value.trim();
+        const market = document.getElementById('specialMarket').value.trim();
+        const odds = parseFloat(document.getElementById('specialOdds').value);
+        const stake = parseFloat(document.getElementById('specialStake').value);
+        const date = document.getElementById('specialDate').value || new Date().toISOString().slice(0, 10);
+        const league = document.getElementById('specialLeague').value.trim() || 'Spécial';
+
+        if (!home || !away || !market || isNaN(odds) || odds <= 0 || isNaN(stake) || stake <= 0) {
+            showToast('Tous les champs sont obligatoires (cote > 0, mise > 0)', 'error');
+            return;
+        }
+
+        // Vérifier que les équipes existent dans la base, sinon les créer
+        let hT = await DB.getTeam(home);
+        if (!hT) {
+            hT = { name: home, elo: 1500, matches: 0, xG: 1.0, xGA: 1.0, stats: { xG: 1.0, xGA: 1.0, goalsPerMatch: 0 }, formLast5: ['D','D','D','D','D'], seasons: {} };
+            await DB.saveTeam(hT);
+        }
+        let aT = await DB.getTeam(away);
+        if (!aT) {
+            aT = { name: away, elo: 1500, matches: 0, xG: 1.0, xGA: 1.0, stats: { xG: 1.0, xGA: 1.0, goalsPerMatch: 0 }, formLast5: ['D','D','D','D','D'], seasons: {} };
+            await DB.saveTeam(aT);
+        }
+        this.teams = await DB.getAllTeams();
+
+        const entry = {
+            homeTeam: home,
+            awayTeam: away,
+            league: league,
+            market: market,
+            key: 'special_' + Date.now(),
+            odd: odds,
+            stake: stake,
+            prob: 0.5, // probabilité par défaut, non calculée
+            fairOdd: 1 / 0.5,
+            edge: 0,
+            date: date,
+            matchKey: `${home}|${away}|special_${Date.now()}`,
+            timestamp: Date.now(),
+            model: 'special',
+            special: true,
+            manualValidation: true,
+            result: 'pending',
+            profit: 0
+        };
+
+        const id = await DB.saveCouponEntry(entry);
+        entry.id = id;
+        this.coupon.push(entry);
+        document.getElementById('specialBetModal').classList.add('hidden');
+        this.renderCoupon();
+        this.updateCouponBadge();
+        showToast('✅ Pari spécial ajouté au coupon', 'success');
+        this.autoSave();
+    },
+
+    // Validation manuelle des paris spéciaux
+    async validateSpecialBet() {
+        const specialBets = this.trackingData.filter(b => b.special === true && b.result === 'pending');
+        if (specialBets.length === 0) {
+            showToast('Aucun pari spécial en attente', 'info');
+            return;
+        }
+
+        // Afficher une liste modale pour choisir le pari spécial à valider
+        let html = `<div class="text-sub fs-06 mb-2">Sélectionnez le pari spécial à valider :</div>`;
+        specialBets.forEach((bet, index) => {
+            html += `<div class="flex-between" style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.65rem;">
+                <span>${index+1}. ${bet.homeTeam} vs ${bet.awayTeam} - ${bet.market}</span>
+                <span>Cote: ${bet.odd.toFixed(2)} | Mise: ${bet.stake} CDF</span>
+                <button class="btn btn-sm btn-gold" onclick="App.openSpecialBetValidation(${bet.id})">✅ Valider</button>
+            </div>`;
+        });
+        html += `<div class="mt-2"><button class="btn btn-secondary" onclick="document.getElementById('specialBetModal').classList.add('hidden')">Fermer</button></div>`;
+        const modal = document.getElementById('specialBetModal');
+        modal.querySelector('.modal-content').innerHTML = `<h2 class="text-gold fw-700">✅ Valider un pari spécial</h2>` + html;
+        modal.classList.remove('hidden');
+    },
+
+    openSpecialBetValidation(betId) {
+        const bet = this.trackingData.find(b => b.id === betId);
+        if (!bet) { showToast('Pari introuvable', 'error'); return; }
+        // Ouvrir le modal de score pour ce pari
+        this._editingBetId = betId;
+        document.getElementById('modalScoreHome').textContent = bet.homeTeam;
+        document.getElementById('modalScoreAway').textContent = bet.awayTeam;
+        document.getElementById('modalScoreMarket').textContent = bet.market;
+        document.getElementById('modalScoreOdd').textContent = bet.odd.toFixed(2);
+        document.getElementById('modalScoreStake').textContent = bet.stake.toLocaleString() + ' CDF';
+        document.getElementById('modalScoreProb').textContent = 'N/A (spécial)';
+        document.getElementById('modalScoreHG').value = '';
+        document.getElementById('modalScoreAG').value = '';
+        document.getElementById('modalScoreResult').textContent = 'Saisissez le score final';
+        document.getElementById('modalScorePreview').style.borderColor = 'var(--border)';
+        document.getElementById('modalScoreDate').value = bet.date || new Date().toISOString().slice(0, 10);
+        document.getElementById('scoreModal').classList.remove('hidden');
+        document.getElementById('specialBetModal').classList.add('hidden');
+    },
+
+    // --- Ajout de matchs manuels (Amélioration 3) ---
+    clearAddMatchForm() {
+        document.getElementById('addHome').value = '';
+        document.getElementById('addAway').value = '';
+        document.getElementById('addHG').value = '0';
+        document.getElementById('addAG').value = '0';
+        document.getElementById('addDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('addLeague').value = '';
+        document.getElementById('addMatchStatus').textContent = '';
+    },
+
+    async addMatchFromForm() {
+        const home = document.getElementById('addHome').value.trim();
+        const away = document.getElementById('addAway').value.trim();
+        const hg = parseInt(document.getElementById('addHG').value) || 0;
+        const ag = parseInt(document.getElementById('addAG').value) || 0;
+        const date = document.getElementById('addDate').value || new Date().toISOString().slice(0, 10);
+        const league = document.getElementById('addLeague').value.trim() || 'Inconnu';
+
+        if (!home || !away) {
+            showToast('Veuillez sélectionner les deux équipes', 'error');
+            return;
+        }
+
+        if (home.toLowerCase() === away.toLowerCase()) {
+            showToast('Une équipe ne peut pas jouer contre elle-même', 'error');
+            return;
+        }
+
+        // Créer les équipes si elles n'existent pas
+        let hT = await DB.getTeam(home);
+        if (!hT) {
+            hT = { name: home, elo: 1500, matches: 0, xG: 1.0, xGA: 1.0, stats: { xG: 1.0, xGA: 1.0, goalsPerMatch: 0 }, formLast5: ['D','D','D','D','D'], seasons: {} };
+            await DB.saveTeam(hT);
+        }
+        let aT = await DB.getTeam(away);
+        if (!aT) {
+            aT = { name: away, elo: 1500, matches: 0, xG: 1.0, xGA: 1.0, stats: { xG: 1.0, xGA: 1.0, goalsPerMatch: 0 }, formLast5: ['D','D','D','D','D'], seasons: {} };
+            await DB.saveTeam(aT);
+        }
+        this.teams = await DB.getAllTeams();
+
+        // Créer la ligue si elle n'existe pas
+        const existingLeague = await DB.getLeague(league);
+        if (!existingLeague) {
+            await DB.saveLeague({
+                name: league,
+                country: '',
+                season: Utils.extractSeason(date) || '2024-2025',
+                level: 2,
+                leagueStrength: 1.0,
+                eloRef: 1500,
+                homeAdv: 40,
+                avgGoals: 2.7,
+                matchCount: 0
+            });
+            this.leagues = await DB.getAllLeagues();
+        }
+
+        const match = {
+            homeTeam: home,
+            awayTeam: away,
+            FTHG: hg,
+            FTAG: ag,
+            date: date,
+            league: league,
+            season: Utils.extractSeason(date) || '2024-2025'
+        };
+
+        // Enregistrer dans addedMatches et matches
+        await DB.saveAddedMatch(match);
+        await DB.saveMatches([match]);
+
+        // Mettre à jour les statistiques des équipes
+        await this.updateTeamStats(home, away, hg, ag, league);
+
+        // Mettre à jour les Elos
+        const allMatches = await DB.getAllMatches();
+        const allTeams = await DB.getAllTeams();
+        const updatedTeams = await EngineV22._calculateEloGlobal(allMatches, allTeams);
+        for (const t of updatedTeams) {
+            await DB.saveTeam(t);
+        }
+        this.teams = await DB.getAllTeams();
+
+        // Mettre à jour les profils de ligue
+        await LeagueProfileEngine.computeProfile(league, allMatches);
+
+        EngineV22.clearCache();
+        await this.refreshAllData();
+        this.renderRecentMatches();
+        this.clearAddMatchForm();
+        showToast(`✅ Match ${home} ${hg}-${ag} ${away} ajouté`, 'success');
+        this.autoSave();
+    },
+
+    async renderRecentMatches() {
+        const container = document.getElementById('recentMatchesList');
+        const added = await DB.getAllAddedMatches();
+        if (added.length === 0) {
+            container.innerHTML = '<div class="text-sub fs-06" style="padding:12px;">Aucun match ajouté manuellement</div>';
+            return;
+        }
+        const sorted = added.sort((a, b) => (b.id || 0) - (a.id || 0));
+        let html = `<div class="match-entry-row header">
+            <span>Domicile</span><span>Extérieur</span><span>Score</span><span>Date</span><span>Ligue</span><span></span>
+        </div>`;
+        for (const m of sorted.slice(0, 50)) {
+            html += `<div class="match-entry-row">
+                <span class="fw-700 text-cyan">${Utils.escapeHTML(m.homeTeam)}</span>
+                <span class="fw-700">${Utils.escapeHTML(m.awayTeam)}</span>
+                <span class="fw-700 text-gold">${m.FTHG || 0}-${m.FTAG || 0}</span>
+                <span class="text-sub">${Utils.formatDate(m.date)}</span>
+                <span class="text-sub">${Utils.escapeHTML(m.league || 'Inconnu')}</span>
+                <button class="btn btn-sm btn-danger" onclick="App.deleteAddedMatch(${m.id})">✕</button>
+            </div>`;
+        }
+        container.innerHTML = html;
+    },
+
+    async deleteAddedMatch(id) {
+        if (confirm('Supprimer ce match de la liste ?')) {
+            const match = (await DB.getAllAddedMatches()).find(m => m.id === id);
+            if (match) {
+                // Supprimer également de la base matches
+                const allMatches = await DB.getAllMatches();
+                const found = allMatches.find(m => m.homeTeam === match.homeTeam && m.awayTeam === match.awayTeam && m.date === match.date);
+                if (found && found.id) {
+                    await DB.deleteMatch(found.id);
+                }
+            }
+            await DB.deleteAddedMatch(id);
+            this.renderRecentMatches();
+            showToast('Match supprimé', 'info');
+        }
+    },
+
+    async clearAddedMatches() {
+        if (confirm('Supprimer tous les matchs ajoutés manuellement ?')) {
+            await DB.clearAddedMatches();
+            this.renderRecentMatches();
+            showToast('Tous les matchs ajoutés supprimés', 'info');
+        }
+    },
+
+    // --- Gestion des ligues avec homeAdv (Amélioration 4) ---
+    async renderLeagues() {
+        const container = document.getElementById('leaguesList');
+        const leagues = this._leaguesSearchQuery ? this._filteredLeagues : this.leagues;
+        const start = this._leaguesPage * this._leaguesPageSize;
+        const end = start + this._leaguesPageSize;
+        const pageItems = leagues.slice(start, end);
+
+        if (pageItems.length === 0) {
+            container.innerHTML = '<div class="text-sub fs-06" style="padding:12px;">Aucune ligue trouvée</div>';
+            document.getElementById('leaguesPageInfo').textContent = 'Page 0 / 0';
+            return;
+        }
+
+        let html = '';
+        for (const league of pageItems) {
+            const avg = this.leagueAverages.find(a => a.league === league.name);
+            const avgDisplay = avg && avg.isAuto ? `${avg.avgGoals.toFixed(2)} (auto)` : (league.avgGoals ? `${league.avgGoals.toFixed(2)} (man.)` : 'N/A');
+            const matchCount = avg ? avg.matchCount : (league.matchCount || 0);
+            html += `<div class="league-edit-row" style="display:grid;grid-template-columns:1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;gap:6px;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.55rem;align-items:center;">
+                <input type="text" class="league-edit" data-field="name" data-original="${Utils.escapeJS(league.name)}" value="${Utils.escapeHTML(league.name)}" style="padding:2px 4px;font-size:0.5rem;">
+                <input type="text" class="league-edit" data-field="country" data-original="${Utils.escapeJS(league.name)}" value="${Utils.escapeHTML(league.country || '')}" style="padding:2px 4px;font-size:0.5rem;">
+                <input type="text" class="league-edit" data-field="season" data-original="${Utils.escapeJS(league.name)}" value="${Utils.escapeHTML(league.season || '')}" style="padding:2px 4px;font-size:0.5rem;">
+                <input type="number" class="league-edit" data-field="level" data-original="${Utils.escapeJS(league.name)}" value="${league.level || 2}" style="padding:2px 4px;font-size:0.5rem;width:50px;">
+                <input type="number" step="0.01" class="league-edit" data-field="leagueStrength" data-original="${Utils.escapeJS(league.name)}" value="${league.leagueStrength || 1.00}" style="padding:2px 4px;font-size:0.5rem;width:60px;">
+                <input type="number" class="league-edit" data-field="eloRef" data-original="${Utils.escapeJS(league.name)}" value="${league.eloRef || 1500}" style="padding:2px 4px;font-size:0.5rem;width:60px;">
+                <input type="number" class="league-edit" data-field="homeAdv" data-original="${Utils.escapeJS(league.name)}" value="${league.homeAdv || 40}" style="padding:2px 4px;font-size:0.5rem;width:55px;">
+                <span>${avgDisplay}</span>
+                <span class="text-sub fs-06">${matchCount}</span>
+                <div class="flex gap-1">
+                    <button class="btn btn-sm btn-danger" onclick="App.deleteLeague('${Utils.escapeJS(league.name)}')" style="padding:1px 6px;font-size:0.4rem;">✕</button>
+                </div>
+            </div>`;
+        }
+        container.innerHTML = html;
+
+        const totalPages = Math.ceil(leagues.length / this._leaguesPageSize);
+        document.getElementById('leaguesPageInfo').textContent = `Page ${this._leaguesPage + 1} / ${totalPages || 1}`;
+    },
+
+    async saveLeagueEdits() {
+        const inputs = document.querySelectorAll('.league-edit');
+        const updates = {};
+        for (const input of inputs) {
+            const original = input.dataset.original;
+            const field = input.dataset.field;
+            if (!updates[original]) updates[original] = {};
+            if (field === 'level' || field === 'eloRef' || field === 'homeAdv') {
+                updates[original][field] = parseInt(input.value) || 0;
+            } else if (field === 'leagueStrength') {
+                updates[original][field] = parseFloat(input.value) || 1.00;
+            } else {
+                updates[original][field] = input.value;
+            }
+        }
+        for (const [original, data] of Object.entries(updates)) {
+            let league = await DB.getLeague(original);
+            if (league) {
+                if (data.name && data.name !== original) {
+                    const oldName = original;
+                    const newName = data.name;
+                    const matches = await DB.getAllMatches();
+                    for (const m of matches) {
+                        if (m.league === oldName) { m.league = newName; await DB.deleteMatch(m.id); await DB.saveMatches([m]); }
+                    }
+                    const results = await DB.getAllResults();
+                    for (const r of results) {
+                        if (r.league === oldName) { r.league = newName; await DB.saveResult(r); }
+                    }
+                    const teams = await DB.getAllTeams();
+                    for (const t of teams) {
+                        if (t.league === oldName) { t.league = newName; await DB.saveTeam(t); }
+                    }
+                    const profile = await DB.getLeagueProfile(oldName);
+                    if (profile) { await DB.deleteLeagueProfile(oldName); profile.league = newName; await DB.saveLeagueProfile(profile); }
+                    const avg = await DB.getLeagueAverage(oldName);
+                    if (avg) { await DB.saveLeagueAverage(newName, avg); await DB.saveLeagueAverage(oldName, null); }
+                    await DB.deleteLeague(oldName);
+                    league.name = newName;
+                    showToast(`Renommage ligue: ${oldName} → ${newName}`, 'info');
+                }
+                Object.assign(league, data);
+                await DB.saveLeague(league);
+            }
+        }
+        this.leagues = await DB.getAllLeagues();
+        this.matches = await DB.getAllMatches();
+        this.results = await DB.getAllResults();
+        this.teams = await DB.getAllTeams();
+        this.leagueAverages = await DB.getAllLeagueAverages();
+        this.searchLeaguesList();
+        showToast('✅ Ligues sauvegardées', 'success');
+        this.renderLeagues();
+        this.autoSave();
+    },
+
+    async addLeague() {
+        const name = prompt('Nom de la ligue :');
+        if (!name) return;
+        const country = prompt('Pays :') || '';
+        const season = prompt('Saison (ex: 2024-2025) :') || '';
+        const level = parseInt(prompt('Division (1-4) :') || '2');
+        const leagueStrength = parseFloat(prompt('League Strength (ex: 1.05) :') || '1.00');
+        const eloRef = parseInt(prompt('Elo de référence :') || '1500');
+        const homeAdv = parseInt(prompt('Avantage domicile (ex: 40) :') || '40');
+        const avgGoals = parseFloat(prompt('Moyenne de buts (si non calculée auto) :') || '2.70');
+
+        const league = {
+            name: name,
+            country: country,
+            season: season,
+            level: level,
+            leagueStrength: leagueStrength,
+            eloRef: eloRef,
+            homeAdv: homeAdv,
+            avgGoals: avgGoals,
+            matchCount: 0,
+            rho: -0.08,
+            temp1X2: 0.85,
+            tempOver: 1.1,
+            tempBTTS: 0.95,
+            createdAt: new Date().toISOString()
+        };
+        await DB.saveLeague(league);
+        this.leagues = await DB.getAllLeagues();
+        this.searchLeaguesList();
+        this.renderLeagues();
+        showToast(`✅ Ligue ${name} ajoutée`, 'success');
+        this.autoSave();
+    },
+
+    async deleteLeague(name) {
+        if (!confirm(`Supprimer la ligue "${name}" ?`)) return;
+        await DB.deleteLeague(name);
+        this.leagues = await DB.getAllLeagues();
+        this.searchLeaguesList();
+        this.renderLeagues();
+        showToast(`Ligue ${name} supprimée`, 'info');
+        this.autoSave();
+    },
+
+    // --- Autres fonctions (non modifiées) ---
+    getLeagueConfigWithCustom(leagueName) {
+        const defaultConfig = { name: leagueName, homeAdv: 40, rho: -0.08, temp1X2: 0.85, tempOver: 1.1, tempBTTS: 0.95, avgGoals: 2.7, eloRef: 1500, level: 2, leagueStrength: 1.0 };
+        const customLeague = this.leagues.find(l => l.name === leagueName);
+        if (customLeague) {
+            return { ...defaultConfig, leagueStrength: customLeague.leagueStrength || defaultConfig.leagueStrength,
+                level: customLeague.level || defaultConfig.level, eloRef: customLeague.eloRef || defaultConfig.eloRef,
+                avgGoals: customLeague.avgGoals || defaultConfig.avgGoals, homeAdv: customLeague.homeAdv || defaultConfig.homeAdv,
+                rho: customLeague.rho || defaultConfig.rho, temp1X2: customLeague.temp1X2 || defaultConfig.temp1X2,
+                tempOver: customLeague.tempOver || defaultConfig.tempOver, tempBTTS: customLeague.tempBTTS || defaultConfig.tempBTTS,
+                divisionFactor: 1.0 };
+        }
+        return defaultConfig;
+    },
+
     // --- Validation coupon ---
     async validateCoupon() {
         if (this.coupon.length === 0) { showToast('Coupon vide', 'error'); return; }
+
+        // Filtrer les paris spéciaux (ils ne peuvent pas être validés automatiquement)
+        const specials = this.coupon.filter(c => c.special === true);
+        if (specials.length > 0) {
+            showToast(`❌ ${specials.length} pari(s) spécial(aux) détecté(s). Ils doivent être validés manuellement dans le suivi.`, 'error');
+            return;
+        }
 
         if (this.coupon.length > 3) {
             showToast('Maximum 3 sélections par coupon', 'error');
@@ -4923,6 +6123,7 @@ const App = {
                         <button class="btn btn-sm btn-danger" onclick="App.deleteBet(${bet.id})" style="padding:1px 6px;font-size:0.4rem;">✕</button>
                         ${bet.actualScore ? `<span class="text-sub fs-06">${bet.actualScore}</span>` : ''}
                         ${bet.key ? `<span class="text-sub fs-06" style="font-size:0.4rem;">${bet.key}</span>` : ''}
+                        ${bet.special ? `<span class="badge badge-gold">Spécial</span>` : ''}
                     </span>
                 </div>`;
             }
@@ -5855,12 +7056,8 @@ const App = {
                     level: 2,
                     leagueStrength: 1.0,
                     eloRef: 1500,
-                    avgGoals: 2.7,
                     homeAdv: 40,
-                    rho: -0.08,
-                    temp1X2: 0.85,
-                    tempOver: 1.1,
-                    tempBTTS: 0.95,
+                    avgGoals: 2.7,
                     matchCount: 0
                 });
             }
@@ -6266,12 +7463,8 @@ const App = {
                     level: 2,
                     leagueStrength: 1.0,
                     eloRef: 1500,
-                    avgGoals: 2.7,
                     homeAdv: 40,
-                    rho: -0.08,
-                    temp1X2: 0.85,
-                    tempOver: 1.1,
-                    tempBTTS: 0.95,
+                    avgGoals: 2.7,
                     matchCount: 0
                 });
             }
@@ -7224,13 +8417,14 @@ const App = {
             const avg = this.leagueAverages.find(a => a.league === league.name);
             const avgDisplay = avg && avg.isAuto ? `${avg.avgGoals.toFixed(2)} (auto)` : (league.avgGoals ? `${league.avgGoals.toFixed(2)} (man.)` : 'N/A');
             const matchCount = avg ? avg.matchCount : (league.matchCount || 0);
-            html += `<div class="league-edit-row" style="display:grid;grid-template-columns:1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;gap:6px;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.55rem;align-items:center;">
+            html += `<div class="league-edit-row" style="display:grid;grid-template-columns:1.2fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;gap:6px;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.55rem;align-items:center;">
                 <input type="text" class="league-edit" data-field="name" data-original="${Utils.escapeJS(league.name)}" value="${Utils.escapeHTML(league.name)}" style="padding:2px 4px;font-size:0.5rem;">
                 <input type="text" class="league-edit" data-field="country" data-original="${Utils.escapeJS(league.name)}" value="${Utils.escapeHTML(league.country || '')}" style="padding:2px 4px;font-size:0.5rem;">
                 <input type="text" class="league-edit" data-field="season" data-original="${Utils.escapeJS(league.name)}" value="${Utils.escapeHTML(league.season || '')}" style="padding:2px 4px;font-size:0.5rem;">
                 <input type="number" class="league-edit" data-field="level" data-original="${Utils.escapeJS(league.name)}" value="${league.level || 2}" style="padding:2px 4px;font-size:0.5rem;width:50px;">
                 <input type="number" step="0.01" class="league-edit" data-field="leagueStrength" data-original="${Utils.escapeJS(league.name)}" value="${league.leagueStrength || 1.00}" style="padding:2px 4px;font-size:0.5rem;width:60px;">
                 <input type="number" class="league-edit" data-field="eloRef" data-original="${Utils.escapeJS(league.name)}" value="${league.eloRef || 1500}" style="padding:2px 4px;font-size:0.5rem;width:60px;">
+                <input type="number" class="league-edit" data-field="homeAdv" data-original="${Utils.escapeJS(league.name)}" value="${league.homeAdv || 40}" style="padding:2px 4px;font-size:0.5rem;width:55px;">
                 <span>${avgDisplay}</span>
                 <span class="text-sub fs-06">${matchCount}</span>
                 <div class="flex gap-1">
@@ -7273,7 +8467,7 @@ const App = {
             const original = input.dataset.original;
             const field = input.dataset.field;
             if (!updates[original]) updates[original] = {};
-            if (field === 'level' || field === 'eloRef') {
+            if (field === 'level' || field === 'eloRef' || field === 'homeAdv') {
                 updates[original][field] = parseInt(input.value) || 0;
             } else if (field === 'leagueStrength') {
                 updates[original][field] = parseFloat(input.value) || 1.00;
@@ -7330,6 +8524,7 @@ const App = {
         const level = parseInt(prompt('Division (1-4) :') || '2');
         const leagueStrength = parseFloat(prompt('League Strength (ex: 1.05) :') || '1.00');
         const eloRef = parseInt(prompt('Elo de référence :') || '1500');
+        const homeAdv = parseInt(prompt('Avantage domicile (ex: 40) :') || '40');
         const avgGoals = parseFloat(prompt('Moyenne de buts (si non calculée auto) :') || '2.70');
 
         const league = {
@@ -7339,9 +8534,9 @@ const App = {
             level: level,
             leagueStrength: leagueStrength,
             eloRef: eloRef,
+            homeAdv: homeAdv,
             avgGoals: avgGoals,
             matchCount: 0,
-            homeAdv: 40,
             rho: -0.08,
             temp1X2: 0.85,
             tempOver: 1.1,
