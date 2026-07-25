@@ -1391,7 +1391,8 @@
             </div>
             <div id="couponList" class="scroll-table" style="max-height:300px;"></div>
             <div id="couponSummary" class="coupon-summary hidden">
-                <div class="item"><div class="label">Sélections</div><div class="value" id="couponSelections">0</div></div>
+                <div class="item"><div class="label">Sélections (total)</div><div class="value" id="couponSelections">0</div></div>
+                <div class="item"><div class="label">Sélections normales</div><div class="value" id="couponValidSelections">0</div></div>
                 <div class="item"><div class="label">Cote totale</div><div class="value" id="couponTotalOdds">1.00</div></div>
                 <div class="item"><div class="label">Probabilité totale</div><div class="value" id="couponTotalProb">0%</div></div>
                 <div class="item"><div class="label">Value totale</div><div class="value" id="couponTotalEdge">0%</div></div>
@@ -4998,6 +4999,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         } catch (e) { console.warn('Erreur sauvegarde coupon:', e); }
     },
 
+    // ==== RENDER COUPON (CORRIGÉ) ====
     renderCoupon() {
         const list = document.getElementById('couponList');
         const summary = document.getElementById('couponSummary');
@@ -5006,6 +5008,8 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             summary.classList.add('hidden');
             return;
         }
+
+        // Affichage de la liste
         list.innerHTML = this.coupon.map(c =>
             `<div class="coupon-item">
                 <div class="match-info">
@@ -5027,6 +5031,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             </div>`
         ).join('');
 
+        // Calculs sur TOUTES les sélections (combiné)
         const totalOdds = this.coupon.reduce((acc, c) => acc * c.odd, 1);
         const totalProb = this.coupon.reduce((acc, c) => acc * c.prob, 1);
         const totalEdge = totalOdds * totalProb - 1;
@@ -5034,7 +5039,11 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         const potentialWin = stake * totalOdds;
         const expectedReturn = (totalProb * totalOdds - 1) * 100;
 
-        document.getElementById('couponSelections').textContent = this.coupon.length;
+        // Nombre de sélections normales (pour info)
+        const normalBets = this.coupon.filter(c => !c.special);
+
+        document.getElementById('couponSelections').textContent = this.coupon.length; // total
+        document.getElementById('couponValidSelections').textContent = normalBets.length;
         document.getElementById('couponTotalOdds').textContent = totalOdds.toFixed(2);
         document.getElementById('couponTotalProb').textContent = (totalProb * 100).toFixed(1) + '%';
         document.getElementById('couponTotalEdge').textContent = (totalEdge * 100).toFixed(1) + '%';
@@ -5044,6 +5053,22 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         const kellyStake = Math.round(this.bankroll * kelly);
         document.getElementById('couponKelly').textContent = kellyStake.toLocaleString() + ' CDF';
         document.getElementById('couponExpectedReturn').textContent = expectedReturn.toFixed(1) + '%';
+
+        // Message si spéciaux
+        const specialBets = this.coupon.filter(c => c.special);
+        if (specialBets.length > 0) {
+            let msg = summary.querySelector('.special-msg');
+            if (!msg) {
+                msg = document.createElement('div');
+                msg.className = 'text-sub fs-06 mt-1 special-msg';
+                summary.prepend(msg);
+            }
+            msg.textContent = `⚠️ ${specialBets.length} pari(s) spécial(aux) inclus. Ils seront à valider manuellement dans le suivi.`;
+        } else {
+            const msg = summary.querySelector('.special-msg');
+            if (msg) msg.remove();
+        }
+
         summary.classList.remove('hidden');
     },
 
@@ -5120,7 +5145,9 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             fairOdd: data.odd,
             matchKey: matchKey,
             timestamp: Date.now(),
-            model: 'ensemble'
+            model: 'ensemble',
+            special: false,
+            manualValidation: false
         };
         const id = await DB.saveCouponEntry(entry);
         entry.id = id;
@@ -5204,7 +5231,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             odd: odds,
             stake: stake,
             prob: 0.5, // probabilité par défaut, non calculée
-            fairOdd: 1 / 0.5,
+            fairOdd: 1.00, // mis à 1.00 pour ne pas influencer les calculs (exclu)
             edge: 0,
             date: date,
             matchKey: `${home}|${away}|special_${Date.now()}`,
@@ -5570,52 +5597,55 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         return defaultConfig;
     },
 
-    // --- Validation coupon ---
+    // ==== VALIDATION COUPON (CORRIGÉE) ====
     async validateCoupon() {
-        if (this.coupon.length === 0) { showToast('Coupon vide', 'error'); return; }
-
-        // Filtrer les paris spéciaux (ils ne peuvent pas être validés automatiquement)
-        const specials = this.coupon.filter(c => c.special === true);
-        if (specials.length > 0) {
-            showToast(`❌ ${specials.length} pari(s) spécial(aux) détecté(s). Ils doivent être validés manuellement dans le suivi.`, 'error');
+        if (this.coupon.length === 0) {
+            showToast('Coupon vide', 'error');
             return;
         }
 
-        if (this.coupon.length > 3) {
-            showToast('Maximum 3 sélections par coupon', 'error');
+        // Vérifier les paris spéciaux : on les garde, mais on prévient qu'ils seront manuels
+        const specials = this.coupon.filter(c => c.special);
+        const normals = this.coupon.filter(c => !c.special);
+
+        // Vérifier les conditions sur les paris normaux
+        if (normals.length > 3) {
+            showToast('Maximum 3 sélections normales par coupon', 'error');
             return;
         }
 
         const threshold = this._hotPickThreshold;
-        const lowProb = this.coupon.some(c => c.prob < threshold);
+        const lowProb = normals.some(c => c.prob < threshold);
         if (lowProb) {
-            showToast(`Toutes les sélections doivent avoir une probabilité ≥ ${(threshold*100).toFixed(0)}%`, 'error');
+            showToast(`Toutes les sélections normales doivent avoir une probabilité ≥ ${(threshold*100).toFixed(0)}%`, 'error');
             return;
         }
 
-        const negativeEdge = this.coupon.some(c => c.edge <= 0);
+        const negativeEdge = normals.some(c => c.edge <= 0);
         if (negativeEdge) {
-            showToast('Toutes les sélections doivent avoir un edge positif', 'error');
+            showToast('Toutes les sélections normales doivent avoir un edge positif', 'error');
             return;
         }
 
-        const badOdd = this.coupon.some(c => c.odd < 1.25 || c.odd > 1.70);
+        const badOdd = normals.some(c => c.odd < 1.25 || c.odd > 1.70);
         if (badOdd) {
             showToast('Cotes individuelles recommandées entre 1.25 et 1.70', 'alert');
             if (!confirm('Continuer malgré les cotes recommandées ?')) return;
         }
 
+        // Vérifier les doublons de match sur les normales
         const matches = new Set();
-        for (const c of this.coupon) {
+        for (const c of normals) {
             const key = `${c.homeTeam}|${c.awayTeam}`;
             if (matches.has(key)) {
-                showToast('Doublon du même match détecté', 'error');
+                showToast('Doublon du même match détecté dans les sélections normales', 'error');
                 return;
             }
             matches.add(key);
         }
 
-        const markets = this.coupon.map(c => c.key);
+        // Vérifier les corrélations sur les normales
+        const markets = normals.map(c => c.key);
         const correlated = [
             ['1', 'X', '2'],
             ['1X', 'X2', '12'],
@@ -5649,6 +5679,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             }
         }
 
+        // Cote totale sur TOUTES les sélections (combiné)
         const totalOdds = this.coupon.reduce((acc, c) => acc * c.odd, 1);
         if (totalOdds < 1.80 || totalOdds > 2.50) {
             showToast(`Cote totale ${totalOdds.toFixed(2)} — recommandée entre 1.80 et 2.50`, 'alert');
@@ -5656,19 +5687,43 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         }
 
         const totalStake = Math.round(this.bankroll * (this.riskLevel / 100));
-        if (totalStake > this.bankroll) { showToast('Capital insuffisant', 'error'); return; }
-        if (!confirm(`Valider le coupon avec ${this.coupon.length} sélections, cote totale ${totalOdds.toFixed(2)}, mise ${totalStake.toLocaleString()} CDF ?`)) return;
+        if (totalStake > this.bankroll) {
+            showToast('Capital insuffisant', 'error');
+            return;
+        }
 
+        let confirmMsg = `Valider le coupon avec ${this.coupon.length} sélection(s) (${normals.length} normale(s), ${specials.length} spéciale(s)), cote totale ${totalOdds.toFixed(2)}, mise ${totalStake.toLocaleString()} CDF.`;
+        if (specials.length > 0) {
+            confirmMsg += `\n\n⚠️ Les paris spéciaux devront être validés manuellement dans le suivi.`;
+        }
+        if (!confirm(confirmMsg)) return;
+
+        // Créer l'entrée de tracking avec TOUTES les sélections
         const couponData = {
-            type: 'coupon', date: new Date().toISOString(),
+            type: 'coupon',
+            date: new Date().toISOString(),
             selections: this.coupon.map(c => ({
-                homeTeam: c.homeTeam, awayTeam: c.awayTeam, league: c.league,
-                market: c.market, odds: c.odd, prob: c.prob, edge: c.edge,
-                result: 'pending', actualScore: null, profit: 0, key: c.key || c.market,
-                model: c.model || 'ensemble'
+                homeTeam: c.homeTeam,
+                awayTeam: c.awayTeam,
+                league: c.league,
+                market: c.market,
+                odds: c.odd,
+                prob: c.prob,
+                edge: c.edge,
+                result: 'pending',
+                actualScore: null,
+                profit: 0,
+                key: c.key || c.market,
+                model: c.model || 'ensemble',
+                special: c.special || false,
+                manualValidation: c.manualValidation || false
             })),
-            totalOdds: totalOdds, totalStake: totalStake,
-            totalProfit: 0, result: 'pending', status: 'active', timestamp: Date.now()
+            totalOdds: totalOdds,
+            totalStake: totalStake,
+            totalProfit: 0,
+            result: 'pending',
+            status: 'active',
+            timestamp: Date.now()
         };
 
         const id = await DB.saveTracking(couponData);
@@ -5678,12 +5733,19 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         this.bankroll -= totalStake;
         const profit = this.initialBankroll !== null ? this.bankroll - this.initialBankroll : -totalStake;
         this.capitalHistory.push({
-            date: new Date().toISOString().slice(0, 10), bankroll: Math.round(this.bankroll),
-            profit: profit, operation: `Coupon ${this.coupon.length} sélections (en attente)`,
-            stake: totalStake, odds: totalOdds, isWin: false, profitAmount: -totalStake, couponId: id
+            date: new Date().toISOString().slice(0, 10),
+            bankroll: Math.round(this.bankroll),
+            profit: profit,
+            operation: `Coupon ${this.coupon.length} sélections (en attente)`,
+            stake: totalStake,
+            odds: totalOdds,
+            isWin: false,
+            profitAmount: -totalStake,
+            couponId: id
         });
         this.saveCapitalHistory();
 
+        // Vider le coupon
         await DB.clearCoupon();
         this.coupon = [];
         this.trackingData = await DB.getAllTracking();
@@ -5693,7 +5755,9 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         this.refreshUI();
         this.updateRiskDisplay();
         this.autoSave();
-        showToast(`✅ Coupon enregistré!`, 'success');
+        showToast(`✅ Coupon enregistré dans le suivi!`, 'success');
+        
+        // Ouvrir le modal pour saisir les scores/résultats si l'utilisateur le souhaite
         this.openCouponScoreModal(couponData);
     },
 
@@ -5708,20 +5772,37 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             <div><span class="text-sub fs-06">Status</span><div class="fw-700" id="couponStatusText">⏳ En attente</div></div>
         </div>`;
         coupon.selections.forEach((sel, index) => {
+            const isSpecial = sel.special || false;
             html += `
                 <div class="card mb-1" style="padding:12px;border:1px solid var(--border);">
                     <div class="flex-between"><span class="fw-700">${Utils.escapeHTML(sel.homeTeam)} vs ${Utils.escapeHTML(sel.awayTeam)}</span>
-                    <span class="badge badge-cyan">${Utils.escapeHTML(sel.market)}</span></div>
-                    <div class="text-sub fs-06">Cote: ${sel.odds.toFixed(2)}</div>
-                    <div class="flex gap-1 mt-1 flex-wrap">
-                        <div style="display:flex;align-items:center;gap:4px;">
-                            <input type="number" id="couponScore_${index}_hg" placeholder="Dom" style="width:50px;padding:4px;font-size:0.6rem;" min="0" value="">
-                            <span>-</span>
-                            <input type="number" id="couponScore_${index}_ag" placeholder="Ext" style="width:50px;padding:4px;font-size:0.6rem;" min="0" value="">
-                        </div>
-                        <button class="btn btn-sm btn-success" onclick="App.validateCouponSelection(${index})" style="padding:2px 10px;font-size:0.5rem;">✅</button>
+                    <span class="badge badge-cyan">${Utils.escapeHTML(sel.market)}</span>
+                    ${isSpecial ? '<span class="badge badge-gold">Spécial</span>' : ''}
                     </div>
-                    <div id="couponSelectionStatus_${index}" class="text-sub fs-06 mt-1">En attente...</div>
+                    <div class="text-sub fs-06">Cote: ${sel.odds.toFixed(2)}</div>
+                    ${isSpecial ? `
+                        <div class="flex gap-1 mt-1 flex-wrap">
+                            <label class="text-sub fs-06">Résultat :</label>
+                            <select id="specialResult_${index}" class="special-result-select" style="width:auto;padding:4px 8px;font-size:0.6rem;">
+                                <option value="">Sélectionner</option>
+                                <option value="win">✅ Gagné</option>
+                                <option value="loss">❌ Perdu</option>
+                                <option value="push">↔️ Remboursé</option>
+                            </select>
+                            <button class="btn btn-sm btn-success" onclick="App.validateSpecialSelection(${index})" style="padding:2px 10px;font-size:0.5rem;">✅</button>
+                        </div>
+                        <div id="couponSpecialStatus_${index}" class="text-sub fs-06 mt-1">En attente...</div>
+                    ` : `
+                        <div class="flex gap-1 mt-1 flex-wrap">
+                            <div style="display:flex;align-items:center;gap:4px;">
+                                <input type="number" id="couponScore_${index}_hg" placeholder="Dom" style="width:50px;padding:4px;font-size:0.6rem;" min="0" value="">
+                                <span>-</span>
+                                <input type="number" id="couponScore_${index}_ag" placeholder="Ext" style="width:50px;padding:4px;font-size:0.6rem;" min="0" value="">
+                            </div>
+                            <button class="btn btn-sm btn-success" onclick="App.validateCouponSelection(${index})" style="padding:2px 10px;font-size:0.5rem;">✅</button>
+                        </div>
+                        <div id="couponSelectionStatus_${index}" class="text-sub fs-06 mt-1">En attente...</div>
+                    `}
                 </div>
             `;
         });
@@ -5773,6 +5854,32 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         document.getElementById(`couponScore_${index}_hg`).disabled = true;
         document.getElementById(`couponScore_${index}_ag`).disabled = true;
 
+        this._checkAllValidated();
+    },
+
+    validateSpecialSelection(index) {
+        const coupon = this._editingCoupon;
+        if (!coupon) return;
+        const select = document.getElementById(`specialResult_${index}`);
+        const result = select.value;
+        if (!result) { showToast('Sélectionnez un résultat', 'error'); return; }
+
+        const selection = coupon.selections[index];
+        selection.result = result;
+        selection.profit = 0; // Pas de profit calculé automatiquement pour les spéciaux
+
+        const statusEl = document.getElementById(`couponSpecialStatus_${index}`);
+        const statusText = result === 'win' ? '✅ Gagné' : result === 'push' ? '↔️ Remboursé' : '❌ Perdu';
+        const statusColor = result === 'win' ? 'var(--green)' : result === 'push' ? 'var(--gold)' : 'var(--red)';
+        statusEl.innerHTML = `<span style="color:${statusColor}">${statusText}</span>`;
+        select.disabled = true;
+
+        this._checkAllValidated();
+    },
+
+    _checkAllValidated() {
+        const coupon = this._editingCoupon;
+        if (!coupon) return;
         const allValidated = coupon.selections.every(s => s.result !== 'pending');
         if (allValidated) { document.getElementById('finalizeCouponBtn').disabled = false; }
     },
@@ -5811,6 +5918,31 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
 
         const date = new Date().toISOString().slice(0, 10);
         for (const sel of coupon.selections) {
+            if (sel.special) {
+                // Pour les spéciaux, on enregistre un résultat sans score
+                await DB.saveResult({
+                    date: date,
+                    homeTeam: sel.homeTeam,
+                    awayTeam: sel.awayTeam,
+                    league: sel.league || 'Inconnu',
+                    hg: 0,
+                    ag: 0,
+                    result: sel.result,
+                    market: sel.market,
+                    key: sel.key || sel.market,
+                    odds: sel.odds,
+                    stake: coupon.totalStake / coupon.selections.length,
+                    profit: sel.profit || 0,
+                    timestamp: Date.now(),
+                    couponId: coupon.id,
+                    model: 'special',
+                    prob: sel.prob || 0,
+                    special: true
+                });
+                continue;
+            }
+
+            // Pour les normales, on enregistre le score
             await DB.saveResult({
                 date: date,
                 homeTeam: sel.homeTeam,
@@ -5898,8 +6030,9 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             html += `<div class="flex-between" style="padding:4px 0;border-bottom:1px solid var(--border);font-size:0.65rem;">
                 <span>${idx+1}. ${s.homeTeam} vs ${s.awayTeam}</span>
                 <span class="badge badge-cyan">${s.market}</span>
+                ${s.special ? '<span class="badge badge-gold">Spécial</span>' : ''}
                 <span>${s.odds.toFixed(2)}</span>
-                <span>${s.actualScore || '-'}</span>
+                <span>${s.actualScore || (s.special ? '-' : '-')}</span>
                 <span>${status}</span>
                 <span style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${s.profit >= 0 ? '+' : ''}${s.profit?.toFixed(2) || 0} CDF</span>
             </div>`;
@@ -5973,7 +6106,9 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             edge: hotPick.edge || (hotPick.modelProb * odd - 1),
             date: m.date || new Date().toISOString().slice(0, 10),
             matchKey: matchKey, timestamp: Date.now(),
-            model: 'hotpick'
+            model: 'hotpick',
+            special: false,
+            manualValidation: false
         };
         const idEntry = await DB.saveCouponEntry(entry);
         entry.id = idEntry;
@@ -6021,7 +6156,9 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
                 edge: hotPick.edge || (hotPick.modelProb * odd - 1),
                 date: m.date || new Date().toISOString().slice(0, 10),
                 matchKey: matchKey, timestamp: Date.now(),
-                model: 'hotpick'
+                model: 'hotpick',
+                special: false,
+                manualValidation: false
             };
             this.coupon.push(entry);
             DB.saveCouponEntry(entry).then(id => { entry.id = id; }).catch(() => {});
@@ -6137,6 +6274,8 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         filtered.forEach(bet => {
             if (bet.type === 'coupon') {
                 const statusColor = bet.result === 'win' ? 'var(--green)' : bet.result === 'loss' ? 'var(--red)' : bet.result === 'partial_win' ? 'var(--gold)' : bet.result === 'push' ? 'var(--cyan)' : 'var(--cyan)';
+                // Vérifier si toutes les sélections sont résolues
+                const allSettled = bet.selections?.every(s => s.result !== 'pending') || false;
                 h += `<div class="tracking-grid coupon-item" style="grid-template-columns:1.2fr 0.6fr 0.5fr 0.6fr 0.5fr 0.5fr 0.6fr;padding:6px 0;border-bottom:2px solid var(--gold);background:rgba(245,158,11,0.05);">
                     <div><span class="fw-700 text-gold">🎫 Coupon</span>
                     <div class="text-sub fs-06">${bet.selections?.map(s => `${s.homeTeam} vs ${s.awayTeam}`).join(' | ').substring(0, 60)}${bet.selections?.length > 3 ? '...' : ''}</div></div>
@@ -6147,6 +6286,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
                     <span style="color:${(bet.totalProfit || 0) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">${(bet.totalProfit || 0) >= 0 ? '+' : ''}${(bet.totalProfit || 0).toFixed(2)} CDF</span>
                     <span class="flex gap-1 flex-wrap">
                         ${bet.status === 'active' ? `<button class="btn btn-sm btn-gold" onclick="App.openCouponScoreModalById(${bet.id})" style="padding:1px 6px;font-size:0.45rem;">⚽ Scores</button>` : `<button class="btn btn-sm btn-secondary" onclick="App.viewCouponDetails(${bet.id})" style="padding:1px 6px;font-size:0.45rem;">📊</button>`}
+                        ${bet.status === 'active' && !allSettled ? `<button class="btn btn-sm btn-success" onclick="App.quickWinCoupon(${bet.id})" style="padding:1px 6px;font-size:0.45rem;">✅ Gagné</button><button class="btn btn-sm btn-danger" onclick="App.quickLossCoupon(${bet.id})" style="padding:1px 6px;font-size:0.45rem;">❌ Perdu</button>` : ''}
                         <button class="btn btn-sm btn-danger" onclick="App.deleteBet(${bet.id})" style="padding:1px 6px;font-size:0.4rem;">✕</button>
                     </span>
                 </div>`;
@@ -6175,6 +6315,57 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         list.innerHTML = h;
         this.updateTrackingSummary();
         this.updateCouponBadge();
+    },
+
+    // Boutons de validation rapide pour les coupons
+    async quickWinCoupon(couponId) {
+        if (!confirm('Marquer toutes les sélections comme gagnantes ?')) return;
+        const coupon = this.trackingData.find(b => b.id === couponId);
+        if (!coupon || coupon.type !== 'coupon' || coupon.status !== 'active') { showToast('Coupon non valide', 'error'); return; }
+        // Marquer toutes les sélections comme gagnantes
+        for (const sel of coupon.selections) {
+            sel.result = 'win';
+            sel.profit = (coupon.totalStake / coupon.selections.length) * sel.odds - (coupon.totalStake / coupon.selections.length);
+        }
+        const totalProfit = coupon.selections.reduce((sum, s) => sum + s.profit, 0);
+        coupon.totalProfit = totalProfit;
+        coupon.result = 'win';
+        coupon.status = 'settled';
+        await DB.updateTracking(couponId, { selections: coupon.selections, totalProfit: totalProfit, result: 'win', status: 'settled' });
+        this.bankroll += coupon.totalStake + totalProfit;
+        this.saveCapitalHistory();
+        await this.refreshAllData();
+        this.renderTracking();
+        this.renderCapitalPage();
+        this.renderResults();
+        this.refreshUI();
+        this.updateRiskDisplay();
+        this.autoSave();
+        showToast(`✅ Coupon marqué gagnant (profit: ${totalProfit.toFixed(0)} CDF)`, 'success');
+    },
+
+    async quickLossCoupon(couponId) {
+        if (!confirm('Marquer toutes les sélections comme perdantes ?')) return;
+        const coupon = this.trackingData.find(b => b.id === couponId);
+        if (!coupon || coupon.type !== 'coupon' || coupon.status !== 'active') { showToast('Coupon non valide', 'error'); return; }
+        for (const sel of coupon.selections) {
+            sel.result = 'loss';
+            sel.profit = - (coupon.totalStake / coupon.selections.length);
+        }
+        const totalProfit = -coupon.totalStake;
+        coupon.totalProfit = totalProfit;
+        coupon.result = 'loss';
+        coupon.status = 'settled';
+        await DB.updateTracking(couponId, { selections: coupon.selections, totalProfit: totalProfit, result: 'loss', status: 'settled' });
+        this.saveCapitalHistory();
+        await this.refreshAllData();
+        this.renderTracking();
+        this.renderCapitalPage();
+        this.renderResults();
+        this.refreshUI();
+        this.updateRiskDisplay();
+        this.autoSave();
+        showToast(`❌ Coupon marqué perdant (perte: ${totalProfit.toFixed(0)} CDF)`, 'error');
     },
 
     openCouponScoreModalById(couponId) {
@@ -6598,6 +6789,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
                 ${r.couponId ? `<div class="text-sub fs-06">🎫 Coupon #${r.couponId}</div>` : ''}
                 ${r.key ? `<div class="text-sub fs-06" style="font-size:0.45rem;">Clé: ${r.key}</div>` : ''}
                 ${r.model ? `<div class="text-sub fs-06" style="font-size:0.4rem;">Modèle: ${r.model}</div>` : ''}
+                ${r.special ? `<div class="text-sub fs-06" style="font-size:0.4rem;">🔵 Spécial</div>` : ''}
             </div>`
         ).join('');
         document.getElementById('resultCount').textContent = results.length;
@@ -6605,10 +6797,10 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
 
     exportResultsCSV() {
         if (this.results.length === 0) { showToast('Aucun résultat', 'error'); return; }
-        let csv = 'Date;Match;Ligue;Score;Marché;Clé;Résultat;Profit;Modèle\n';
+        let csv = 'Date;Match;Ligue;Score;Marché;Clé;Résultat;Profit;Modèle;Spécial\n';
         this.results.forEach(r => {
             const match = `${r.homeTeam} vs ${r.awayTeam}`;
-            csv += `${r.date};${match};${r.league || 'Inconnu'};${r.hg}-${r.ag};${r.market || ''};${r.key || ''};${r.result};${r.profit || 0};${r.model || ''}\n`;
+            csv += `${r.date};${match};${r.league || 'Inconnu'};${r.hg}-${r.ag};${r.market || ''};${r.key || ''};${r.result};${r.profit || 0};${r.model || ''};${r.special ? 'Oui' : 'Non'}\n`;
         });
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
