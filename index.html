@@ -2468,7 +2468,7 @@ const EngineV22 = {
             if (m.homeTeam) matchCounts[m.homeTeam] = (matchCounts[m.homeTeam] || 0) + 1;
             if (m.awayTeam) matchCounts[m.awayTeam] = (matchCounts[m.awayTeam] || 0) + 1;
         }
-        let maxIter = 10, changed = true, iter = 0;
+        let maxIter = 5, changed = true, iter = 0; // réduit de 10 à 5 pour accélérer
         while (changed && iter < maxIter) {
             changed = false;
             for (const match of sortedMatches) {
@@ -3213,6 +3213,7 @@ const MarketCalculator = {
 const App = {
     teams: [],
     matches: [],
+    addedMatches: [], // <-- AJOUT
     trackingData: [],
     analysedMatches: [],
     coupon: [],
@@ -3327,6 +3328,7 @@ const App = {
             showToast('🔄 Synchronisation des données...', 'info');
             this.matches = await DB.getAllMatches();
             this.teams = await DB.getAllTeams();
+            this.addedMatches = await DB.getAllAddedMatches(); // <-- AJOUT
             this.trackingData = await DB.getAllTracking();
             this.analysedMatches = await DB.getAllAnalysedMatches();
             this.coupon = await DB.getAllCoupon();
@@ -4466,6 +4468,10 @@ const App = {
         const aShots = aStats.shots ? aStats.shots.toFixed(1) : 'N/A';
         const hShotsOnTarget = hStats.shotsOnTargetPerMatch ? hStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A';
         const aShotsOnTarget = aStats.shotsOnTargetPerMatch ? aStats.shotsOnTargetPerMatch.toFixed(1) : 'N/A';
+        const hCorners = hStats.corners ? hStats.corners.toFixed(1) : 'N/A';
+        const aCorners = aStats.corners ? aStats.corners.toFixed(1) : 'N/A';
+        const hCards = hStats.cards ? hStats.cards.toFixed(1) : 'N/A';
+        const aCards = aStats.cards ? aStats.cards.toFixed(1) : 'N/A';
 
         // Récupération des données H2H depuis le résultat de l'analyse
         const h2hMatches = result.h2hMatches || [];
@@ -4559,6 +4565,8 @@ Statistiques avancées (si disponibles) :
 - Deep entries : ${hDeep}
 - Tirs / match : ${hShots}
 - Tirs cadrés / match : ${hShotsOnTarget}
+- Corners / match : ${hCorners}
+- Cartons / match : ${hCards}
 
 === ÉQUIPE EXTÉRIEURE ===
 
@@ -4587,6 +4595,8 @@ Statistiques avancées (si disponibles) :
 - Deep entries : ${aDeep}
 - Tirs / match : ${aShots}
 - Tirs cadrés / match : ${aShotsOnTarget}
+- Corners / match : ${aCorners}
+- Cartons / match : ${aCards}
 
 ⸻
 
@@ -4600,8 +4610,8 @@ Tirs cadrés :
 Domicile : ${hShotsOnTarget}
 Extérieur : ${aShotsOnTarget}
 
-Corners : ${hStats.corners ? hStats.corners.toFixed(1) : 'N/A'} / ${aStats.corners ? aStats.corners.toFixed(1) : 'N/A'}
-Cartons : ${hStats.cards ? hStats.cards.toFixed(1) : 'N/A'} / ${aStats.cards ? aStats.cards.toFixed(1) : 'N/A'}
+Corners : ${hCorners} / ${aCorners}
+Cartons : ${hCards} / ${aCards}
 
 Possession : ${hPossession} / ${aPossession}
 
@@ -4970,7 +4980,317 @@ Puis indique :
 
 « Cette analyse est une estimation probabiliste et non une certitude. »
 
-Ne sélectionne jamais un marché uniquement parce que sa probabilité est supérieure à 65 %. La qualité des données, la cohérence des modèles et le contexte doivent également être favorables.`;
+Ne sélectionne jamais un marché uniquement parce que sa probabilité est supérieure à 65 %. La qualité des données, la cohérence des modèles et le contexte doivent également être favorables.
+
+⸻
+
+⸻
+
+NE SÉLECTIONNE PAS AUTOMATIQUEMENT LE MEILLEUR PARI PROPOSÉ PAR L’APK RED DATA.
+
+Ton rôle est d’analyser toutes les possibilités du match afin de trouver le marché avec le meilleur rapport :
+
+- Probabilité réelle
+- Fiabilité des données
+- Risque
+- Valeur par rapport à la cote bookmaker
+
+Les marchés spéciaux doivent être étudiés car certains bookmakers sont parfois moins précis sur ces marchés.
+
+IMPORTANT :
+
+Ne propose un marché spécial que si les données nécessaires sont suffisamment fiables.
+
+Si les données sont insuffisantes :
+
+→ Écrire : "Données insuffisantes pour analyser ce marché."
+
+Ne jamais inventer une probabilité.
+
+==================================================
+
+📌 MARCHÉS LIÉS AUX TIRS
+
+(Utiliser uniquement si les statistiques tirs sont disponibles)
+
+🔹 Tirs totaux
+Analyser :
+- Over/Under 5.5 tirs totaux
+- Over/Under 7.5 tirs totaux
+- Over/Under 9.5 tirs totaux
+- Over/Under 11.5 tirs totaux
+
+🔹 Tirs par équipe
+Analyser :
+- Équipe domicile Over/Under 3.5 tirs
+- Équipe domicile Over/Under 4.5 tirs
+- Équipe extérieur Over/Under 3.5 tirs
+- Équipe extérieur Over/Under 4.5 tirs
+
+Comparer également :
+- Équipe avec le plus de tirs
+- Égalité tirs
+
+🔹 Tirs cadrés
+Analyser :
+- Over/Under 2.5 tirs cadrés totaux
+- Over/Under 3.5 tirs cadrés totaux
+- Over/Under 4.5 tirs cadrés totaux
+
+Par équipe :
+- Domicile Over/Under 1.5 tirs cadrés
+- Extérieur Over/Under 1.5 tirs cadrés
+
+Par période :
+- Over/Under tirs première mi-temps
+- Over/Under tirs deuxième mi-temps
+- Over/Under tirs cadrés première mi-temps
+- Over/Under tirs cadrés deuxième mi-temps
+
+==================================================
+
+📌 MARCHÉS LIÉS AUX CORNERS
+
+(Utiliser uniquement si les données corners sont fiables)
+
+🔹 Corners totaux
+Analyser :
+- Over/Under 4.5 corners
+- Over/Under 5.5 corners
+- Over/Under 6.5 corners
+- Over/Under 7.5 corners
+- Over/Under 8.5 corners
+- Over/Under 9.5 corners
+- Over/Under 10.5 corners
+- Over/Under 11.5 corners
+
+🔹 Corners par équipe
+Analyser :
+- Corners domicile Over/Under 2.5
+- Corners domicile Over/Under 3.5
+- Corners extérieur Over/Under 2.5
+- Corners extérieur Over/Under 3.5
+
+Comparer :
+- Équipe avec le plus de corners
+- Égalité corners
+
+🔹 Corners par période
+Analyser :
+- Corners première mi-temps
+- Corners deuxième mi-temps
+
+==================================================
+
+📌 MARCHÉS LIÉS AUX CARTONS
+
+(Utiliser uniquement si les données cartons sont fiables)
+
+🔹 Cartons totaux
+Analyser :
+- Over/Under 1.5 cartons
+- Over/Under 2.5 cartons
+- Over/Under 3.5 cartons
+- Over/Under 4.5 cartons
+- Over/Under 5.5 cartons
+
+🔹 Cartons par équipe
+Analyser :
+- Cartons domicile
+- Cartons extérieur
+- Équipe avec le plus de cartons
+
+🔹 Cartons spéciaux
+Analyser :
+- Carton rouge Oui/Non
+- Over/Under 0.5 carton rouge
+- Premier carton
+- Dernier carton
+
+🔹 Cartons par période
+Analyser :
+- Cartons première mi-temps
+- Cartons deuxième mi-temps
+
+==================================================
+
+📌 MARCHÉS ÉVÉNEMENTS RARES
+
+Ces marchés doivent avoir une confiance faible sauf si les données sont exceptionnelles.
+
+Analyser :
+
+🔹 Buts spéciaux
+- But contre son camp Oui/Non
+- But sur penalty Oui/Non
+- But sur coup franc direct Oui/Non
+- But de la tête Oui/Non
+- But depuis l’extérieur de la surface Oui/Non
+- But après erreur du gardien Oui/Non
+- But dans les arrêts de jeu Oui/Non
+
+🔹 Performances extrêmes
+- Une équipe sans tir cadré
+- Une équipe sans corner
+- Aucun carton dans le match
+- 5+ cartons
+- 10+ corners
+- Aucun but première mi-temps
+- Aucun but avant 30 minutes
+- Aucun but avant 60 minutes
+- Aucun but avant 75 minutes
+- But dans les 15 premières minutes Oui/Non
+
+Règle :
+Un événement rare avec une cote élevée n’est pas automatiquement une opportunité.
+
+==================================================
+
+📌 MARCHÉS COMBINÉS
+
+Analyser uniquement si chaque événement possède une base statistique solide.
+
+🔹 Double chance + buts
+- 1X + Over 1.5 buts
+- 1X + Over 2.5 buts
+- X2 + Over 1.5 buts
+- X2 + Over 2.5 buts
+- 12 + Over 1.5 buts
+
+🔹 BTTS + buts
+- BTTS Oui + Over 1.5
+- BTTS Oui + Over 2.5
+- BTTS Non + Under 2.5
+
+🔹 Équipe + buts
+- 1X + Équipe domicile Over 0.5 but
+- X2 + Équipe extérieur Over 0.5 but
+
+🔹 Corners + cartons
+- Over 9.5 corners + Over 3.5 cartons
+- Under 7.5 corners + Under 2.5 cartons
+
+🔹 Buts + corners
+- Over 2.5 buts + Over 9.5 corners
+- Under 2.5 buts + Under 7.5 corners
+
+==================================================
+
+📌 MODULE ANALYSE RISQUE PAR MATCH
+
+Pour chaque match analyser individuellement.
+
+Donner obligatoirement :
+
+VERDICT MATCH :
+
+✅ MATCH VALIDÉ
+Conditions :
+- Opportunité claire détectée
+- Statistiques cohérentes
+- Modèles en accord
+- Risque acceptable
+
+⚠️ MATCH RISQUÉ
+Conditions :
+- Quelques signaux négatifs
+- Données incomplètes
+- Incertitude composition/blessures
+- Conflit entre modèles
+
+❌ MATCH À ÉVITER
+Conditions :
+- Pas d’opportunité claire
+- Données insuffisantes
+- Modèles contradictoires
+- Risque trop élevé
+
+Si un match est dangereux :
+→ Retirer uniquement ce match du coupon.
+→ Ne jamais forcer son remplacement.
+
+Afficher obligatoirement :
+- Verdict : VALIDÉ / RISQUÉ / À ÉVITER
+- Niveau confiance (%)
+- Score risque (%)
+- Raisons principales
+- Marché conseillé ou "Aucun pari"
+
+==================================================
+
+📌 MODULE FILTRE ANTI-MAUVAIS PARI
+
+Avant toute recommandation appliquer ce filtre :
+
+1) QUALITÉ DES DONNÉES
+Si qualité RED DATA :
+<70/100 : Réduire la confiance.
+<60/100 : Éviter sauf opportunité exceptionnelle.
+
+2) HISTORIQUE
+Vérifier :
+- Nombre de matchs disponibles
+- Taille de l’échantillon
+- Ancienneté des données
+
+3) COHÉRENCE MODÈLES
+Comparer :
+- Elo
+- Poisson
+- Dixon-Coles
+- Monte Carlo
+- xG
+- Forme récente
+- H2H
+
+Si gros conflit : Réduire confiance.
+
+4) CONTEXTE
+Vérifier :
+- Blessures
+- Suspensions
+- Rotation
+- Fatigue
+- Motivation
+- Calendrier
+
+Si plusieurs risques présents : ❌ AUCUN PARI
+
+==================================================
+
+📌 MODULE SCORE DE RISQUE
+
+Calculer un score de risque :
+
+0-20% 🟢 Très faible risque
+21-40% 🟢 Risque faible
+41-60% 🟡 Risque moyen
+61-80% 🟠 Risque élevé
+81-100% 🔴 Match très dangereux
+
+Facteurs :
+- Qualité données
+- Nombre matchs
+- Écart modèles
+- Variance
+- Blessures
+- Fatigue
+- Motivation
+- Type de marché
+
+Si risque supérieur à 60% :
+- Ne pas utiliser en combiné.
+- Chercher un marché plus stable.
+- Sinon : ❌ AUCUN PARI.
+
+==================================================
+
+RÈGLE FINALE :
+Ne cherche pas à remplir un coupon.
+Le meilleur résultat d’une analyse peut être :
+❌ AUCUN PARI RECOMMANDÉ.
+
+La priorité est la qualité des sélections, pas la quantité.`;
 
         document.getElementById('promptOutput').value = prompt;
         showToast('✅ Prompt généré', 'success');
@@ -5368,20 +5688,16 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         // Enregistrer dans addedMatches et matches
         await DB.saveAddedMatch(match);
         await DB.saveMatches([match]);
+        this.addedMatches.push(match); // <-- AJOUT
 
         // Mettre à jour les statistiques des équipes
         await this.updateTeamStats(home, away, hg, ag, league);
 
-        // Mettre à jour les Elos
-        const allMatches = await DB.getAllMatches();
-        const allTeams = await DB.getAllTeams();
-        const updatedTeams = await EngineV22._calculateEloGlobal(allMatches, allTeams);
-        for (const t of updatedTeams) {
-            await DB.saveTeam(t);
-        }
-        this.teams = await DB.getAllTeams();
+        // Mettre à jour les Elos (incrémental)
+        await this.updateElosForMatches([match]);
 
         // Mettre à jour les profils de ligue
+        const allMatches = await DB.getAllMatches();
         await LeagueProfileEngine.computeProfile(league, allMatches);
 
         EngineV22.clearCache();
@@ -5392,9 +5708,84 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         this.autoSave();
     },
 
+    // --- Mise à jour incrémentale des Elos pour une liste de matchs ---
+    async updateElosForMatches(matches) {
+        if (!matches || matches.length === 0) return;
+        const teams = await DB.getAllTeams();
+        const teamMap = {};
+        for (const t of teams) teamMap[t.name] = t;
+
+        for (const match of matches) {
+            const home = match.homeTeam;
+            const away = match.awayTeam;
+            if (!home || !away) continue;
+
+            // Créer les équipes si elles n'existent pas
+            if (!teamMap[home]) {
+                const newTeam = {
+                    name: home,
+                    elo: 1500,
+                    matches: 0,
+                    xG: 1.0,
+                    xGA: 1.0,
+                    stats: { xG: 1.0, xGA: 1.0, goalsPerMatch: 0, shotsOnTargetPerMatch: 0 },
+                    formLast5: ['D','D','D','D','D'],
+                    seasons: {}
+                };
+                await DB.saveTeam(newTeam);
+                teamMap[home] = newTeam;
+            }
+            if (!teamMap[away]) {
+                const newTeam = {
+                    name: away,
+                    elo: 1500,
+                    matches: 0,
+                    xG: 1.0,
+                    xGA: 1.0,
+                    stats: { xG: 1.0, xGA: 1.0, goalsPerMatch: 0, shotsOnTargetPerMatch: 0 },
+                    formLast5: ['D','D','D','D','D'],
+                    seasons: {}
+                };
+                await DB.saveTeam(newTeam);
+                teamMap[away] = newTeam;
+            }
+
+            const hTeam = teamMap[home];
+            const aTeam = teamMap[away];
+            const hg = match.FTHG || 0;
+            const ag = match.FTAG || 0;
+
+            // Mettre à jour les statistiques de base
+            hTeam.matches = (hTeam.matches || 0) + 1;
+            aTeam.matches = (aTeam.matches || 0) + 1;
+            hTeam.goalsScored = (hTeam.goalsScored || 0) + hg;
+            hTeam.goalsConceded = (hTeam.goalsConceded || 0) + ag;
+            aTeam.goalsScored = (aTeam.goalsScored || 0) + ag;
+            aTeam.goalsConceded = (aTeam.goalsConceded || 0) + hg;
+
+            // Forme
+            const hR = hg > ag ? 'W' : (hg === ag ? 'D' : 'L');
+            const aR = ag > hg ? 'W' : (ag === hg ? 'D' : 'L');
+            hTeam.formLast5 = [...(hTeam.formLast5 || []), hR].slice(-5);
+            aTeam.formLast5 = [...(aTeam.formLast5 || []), aR].slice(-5);
+
+            // Mise à jour Elo (sans itération globale)
+            const league = match.league || match.div || 'default';
+            const leagueConfig = this.getLeagueConfigWithCustom(league);
+            const strength = leagueConfig.leagueStrength || 1.0;
+            const result = EngineV22.updateElo(hTeam, aTeam, hg, ag, 20, strength);
+            hTeam.elo = result.homeNewElo;
+            aTeam.elo = result.awayNewElo;
+
+            // Sauvegarde immédiate
+            await DB.saveTeam(hTeam);
+            await DB.saveTeam(aTeam);
+        }
+    },
+
     async renderRecentMatches() {
         const container = document.getElementById('recentMatchesList');
-        const added = await DB.getAllAddedMatches();
+        const added = this.addedMatches; // on utilise le cache
         if (added.length === 0) {
             container.innerHTML = '<div class="text-sub fs-06" style="padding:12px;">Aucun match ajouté manuellement</div>';
             return;
@@ -5418,7 +5809,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
 
     async deleteAddedMatch(id) {
         if (confirm('Supprimer ce match de la liste ?')) {
-            const match = (await DB.getAllAddedMatches()).find(m => m.id === id);
+            const match = this.addedMatches.find(m => m.id === id);
             if (match) {
                 // Supprimer également de la base matches
                 const allMatches = await DB.getAllMatches();
@@ -5426,8 +5817,9 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
                 if (found && found.id) {
                     await DB.deleteMatch(found.id);
                 }
+                await DB.deleteAddedMatch(id);
+                this.addedMatches = this.addedMatches.filter(m => m.id !== id);
             }
-            await DB.deleteAddedMatch(id);
             this.renderRecentMatches();
             showToast('Match supprimé', 'info');
         }
@@ -5436,6 +5828,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
     async clearAddedMatches() {
         if (confirm('Supprimer tous les matchs ajoutés manuellement ?')) {
             await DB.clearAddedMatches();
+            this.addedMatches = [];
             this.renderRecentMatches();
             showToast('Tous les matchs ajoutés supprimés', 'info');
         }
@@ -7365,7 +7758,10 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         document.getElementById('importProgressText').textContent = '100%';
         setTimeout(() => progress.classList.add('hidden'), 1000);
 
-        // Recalcul xG (corrigé)
+        // Mise à jour incrémentale des Elos pour les nouveaux matchs
+        await this.updateElosForMatches(matchesToAdd);
+
+        // Recalcul xG pour toutes les équipes
         const allTeams = await DB.getAllTeams();
         const allMatches = await DB.getAllMatches();
         const xGTeams = xGEngine.recalculateAllXG(allMatches, allTeams);
@@ -7613,40 +8009,40 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
 
     async recalcElos() {
         if (this.isRecalcRunning) { showToast('Recalcul déjà en cours', 'alert'); return; }
-        const matches = this.matches;
-        if (matches.length < 2) { showToast('Pas assez de matchs', 'error'); return; }
         this.isRecalcRunning = true;
-        showToast('🔄 Recalcul global des Elos...', 'info');
+        showToast('🔄 Mise à jour des Elos (incrémentale)...', 'info');
         document.getElementById('importProgress').classList.remove('hidden');
         document.getElementById('importProgressFill').style.width = '0%';
         document.getElementById('importProgressText').textContent = '0%';
 
         try {
-            let teams = await DB.getAllTeams();
-            teams = await EngineV22._calculateEloGlobal(matches, teams);
-            let saved = 0;
-            for (const team of teams) {
-                const leagueConfig = this.getLeagueConfigWithCustom(team.league || 'default');
-                if (team.seasons && Object.keys(team.seasons).length > 0 && !team.xG_manual) {
-                    const newElo = EngineV22._calculateEloFromAllSeasons(
-                        team.seasons,
-                        leagueConfig.leagueStrength,
-                        leagueConfig.divisionFactor,
-                        leagueConfig.eloRef
-                    );
-                    team.elo = newElo;
-                }
-                await DB.saveTeam(team);
-                saved++;
-                const pct = Math.round((saved / teams.length) * 100);
+            const allMatches = await DB.getAllMatches();
+            const total = allMatches.length;
+            let processed = 0;
+
+            // Mise à jour par lots pour éviter de saturer
+            const batchSize = 100;
+            for (let i = 0; i < allMatches.length; i += batchSize) {
+                const batch = allMatches.slice(i, i + batchSize);
+                await this.updateElosForMatches(batch);
+                processed += batch.length;
+                const pct = Math.min(100, Math.round((processed / total) * 100));
                 document.getElementById('importProgressFill').style.width = pct + '%';
                 document.getElementById('importProgressText').textContent = pct + '%';
             }
-            this.teams = await DB.getAllTeams();
+
+            // Recalcul xG après les Elos
+            const allTeams = await DB.getAllTeams();
+            const xGTeams = xGEngine.recalculateAllXG(allMatches, allTeams);
+            for (const team of xGTeams) {
+                await DB.saveTeam(team);
+            }
+
             document.getElementById('importProgress').classList.add('hidden');
             this.isRecalcRunning = false;
+            this.teams = await DB.getAllTeams();
             this.refreshUI();
-            showToast(`✅ Recalcul global terminé — ${saved} équipes mises à jour`, 'success');
+            showToast(`✅ Elos mis à jour pour ${total} matchs (incrémental)`, 'success');
         } catch (e) {
             document.getElementById('importProgress').classList.add('hidden');
             this.isRecalcRunning = false;
@@ -8452,7 +8848,8 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
             capitalHistory: this.capitalHistory,
             leagues: this.leagues,
             leagueAverages: this.leagueAverages,
-            leagueProfiles: await DB.getAllLeagueProfiles()
+            leagueProfiles: await DB.getAllLeagueProfiles(),
+            addedMatches: this.addedMatches // <-- AJOUT
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -8503,7 +8900,10 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
                         existingSet.add(`${m.homeTeam}|${m.awayTeam}|${m.date}`);
                     }
                     const toAdd = data.matches.filter(m => !existingSet.has(`${m.homeTeam}|${m.awayTeam}|${m.date}`));
-                    if (toAdd.length > 0) await DB.saveMatches(toAdd);
+                    if (toAdd.length > 0) {
+                        await DB.saveMatches(toAdd);
+                        await this.updateElosForMatches(toAdd);
+                    }
                 }
                 if (data.tracking) {
                     for (const t of data.tracking) {
@@ -8578,6 +8978,12 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
                     for (const p of data.leagueProfiles) {
                         await DB.saveLeagueProfile(p);
                     }
+                }
+                if (data.addedMatches) { // <-- AJOUT
+                    for (const am of data.addedMatches) {
+                        await DB.saveAddedMatch(am);
+                    }
+                    this.addedMatches = await DB.getAllAddedMatches();
                 }
 
                 await this.updateLeagueAverages();
@@ -9042,6 +9448,7 @@ Ne sélectionne jamais un marché uniquement parce que sa probabilité est supé
         await DB.deleteAllData();
         this.teams = [];
         this.matches = [];
+        this.addedMatches = [];
         this.trackingData = [];
         this.analysedMatches = [];
         this.coupon = [];
