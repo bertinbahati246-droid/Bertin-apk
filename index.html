@@ -963,6 +963,44 @@
         .stake-input-auto {
             background: rgba(255, 255, 255, 0.03);
         }
+
+        /* transactions specific */
+        .transaction-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border-glass);
+        }
+        .transaction-item .info {
+            flex: 1;
+        }
+        .transaction-item .amount {
+            font-weight: 700;
+            margin: 0 12px;
+        }
+        .transaction-item .amount.positive {
+            color: var(--green);
+        }
+        .transaction-item .amount.negative {
+            color: var(--red);
+        }
+        .transaction-item .date {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+        .transaction-item .reason {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin-left: 8px;
+        }
+        .transaction-item .delete-btn {
+            background: transparent;
+            border: none;
+            color: var(--red);
+            cursor: pointer;
+            font-size: 1rem;
+        }
     </style>
 </head>
 <body>
@@ -1260,6 +1298,71 @@
             </div>
         </section>
 
+        <!-- ===== NOUVEAU : DÉPÔT / RETRAIT ===== -->
+        <section class="page" id="page-transactions">
+            <h2 style="font-weight:700;font-size:1.5rem;margin-bottom:16px;">💸 Dépôt / Retrait</h2>
+
+            <!-- Formulaire -->
+            <div class="glass card">
+                <form id="transactionForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Type</label>
+                            <select id="txType" required>
+                                <option value="depot">Dépôt (+)</option>
+                                <option value="retrait">Retrait (-)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Montant (CDF)</label>
+                            <input type="number" step="0.01" min="0.01" id="txAmount" placeholder="0.00" required />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Raison (optionnel)</label>
+                        <input type="text" id="txReason" placeholder="Ex: Virement bancaire, prélèvement..." />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Date</label>
+                            <input type="date" id="txDate" required />
+                        </div>
+                        <div class="form-group">
+                            <label>Heure</label>
+                            <input type="time" id="txTime" required />
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-green"><i class="fas fa-check"></i> Valider l'opération</button>
+                </form>
+            </div>
+
+            <!-- Résumé des soldes -->
+            <div class="grid-2 mb-1">
+                <div class="stat-card">
+                    <span class="label">Total des dépôts</span>
+                    <div class="value text-green" id="txTotalDepots">0.00</div>
+                </div>
+                <div class="stat-card">
+                    <span class="label">Total des retraits</span>
+                    <div class="value text-red" id="txTotalRetraits">0.00</div>
+                </div>
+            </div>
+
+            <!-- Historique des transactions -->
+            <div class="glass card">
+                <div class="card-header">
+                    <span>Historique des opérations</span>
+                    <i class="fas fa-history"></i>
+                </div>
+                <div id="transactionsList">
+                    <div class="empty-state">
+                        <i class="fas fa-inbox"></i>
+                        <p>Aucune transaction</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
     </main>
 
     <!-- BOTTOM NAV -->
@@ -1268,21 +1371,22 @@
         <button class="nav-item" data-page="surebets"><i class="fas fa-list-ul"></i><span>Historique</span></button>
         <button class="nav-item" data-page="calculator"><i class="fas fa-calculator"></i><span>Calcul</span></button>
         <button class="nav-item" data-page="bookmakers"><i class="fas fa-building"></i><span>Bookies</span></button>
+        <button class="nav-item" data-page="transactions"><i class="fas fa-exchange-alt"></i><span>Dépôt/Retrait</span></button>
         <button class="nav-item" data-page="settings"><i class="fas fa-cog"></i><span>Param</span></button>
     </nav>
 
     <!-- ============================================================
-    JAVASCRIPT — APP COMPLETE (avec corrections)
+    JAVASCRIPT — APP COMPLETE (avec transactions)
     ============================================================ -->
     <script>
         (function() {
             'use strict';
 
             // ============================================================
-            // 1. INDEXEDDB HELPERS (inchangé)
+            // 1. INDEXEDDB HELPERS
             // ============================================================
             const DB_NAME = 'SurebetTrackerDB';
-            const DB_VERSION = 4;
+            const DB_VERSION = 5; // incrémenté pour ajouter 'transactions'
 
             function openDB() {
                 return new Promise((resolve, reject) => {
@@ -1297,6 +1401,9 @@
                         }
                         if (!db.objectStoreNames.contains('settings')) {
                             db.createObjectStore('settings', { keyPath: 'id' });
+                        }
+                        if (!db.objectStoreNames.contains('transactions')) {
+                            db.createObjectStore('transactions', { keyPath: 'id', autoIncrement: true });
                         }
                     };
                     req.onsuccess = () => resolve(req.result);
@@ -1343,6 +1450,7 @@
             let state = {
                 surebets: [],
                 bookmakers: [],
+                transactions: [],
                 settings: { currency: 'CDF', lang: 'fr', initialCapital: 0 }
             };
 
@@ -1364,7 +1472,6 @@
                     canceled: 'Remboursé',
                     loss: 'Perte',
                     oddsError: 'Erreur',
-                    // ... on peut ajouter plus
                 },
                 en: {
                     dashboard: 'Dashboard',
@@ -1409,6 +1516,7 @@
                 surebets: document.getElementById('page-surebets'),
                 calculator: document.getElementById('page-calculator'),
                 bookmakers: document.getElementById('page-bookmakers'),
+                transactions: document.getElementById('page-transactions'),
                 settings: document.getElementById('page-settings'),
             };
 
@@ -1426,6 +1534,7 @@
                     updateCapitalDisplay(); }
                 if (pageId === 'settings') { document.getElementById('settingsCapital').value = state.settings
                         .initialCapital || 0; }
+                if (pageId === 'transactions') { renderTransactions(); }
             }
 
             navItems.forEach(item => {
@@ -1439,13 +1548,15 @@
             // ============================================================
             async function loadData() {
                 try {
-                    const [surebets, bookmakers, settings] = await Promise.all([
+                    const [surebets, bookmakers, settings, transactions] = await Promise.all([
                         dbGetAll('surebets'),
                         dbGetAll('bookmakers'),
-                        dbGetAll('settings')
+                        dbGetAll('settings'),
+                        dbGetAll('transactions')
                     ]);
                     state.surebets = surebets || [];
                     state.bookmakers = bookmakers || [];
+                    state.transactions = transactions || [];
                     const s = settings.find(x => x.id === 'main') || { currency: 'CDF', lang: 'fr', initialCapital: 0 };
                     state.settings = {
                         currency: s.currency || 'CDF',
@@ -1493,26 +1604,30 @@
                 refreshDashboard();
                 renderHistory();
                 renderBookmakers();
+                renderTransactions();
                 document.getElementById('settingsCapital').value = state.settings.initialCapital || 0;
                 const now = new Date();
                 document.getElementById('calcDate').value = now.toISOString().slice(0, 10);
                 document.getElementById('calcTime').value = now.toTimeString().slice(0, 5);
+                // pré-remplir les champs de transaction
+                document.getElementById('txDate').value = now.toISOString().slice(0, 10);
+                document.getElementById('txTime').value = now.toTimeString().slice(0, 5);
                 updateCapitalDisplay();
                 setupStakeModeButtons();
-                // Confirm before leaving
+                // Event du formulaire de transaction
+                document.getElementById('transactionForm').addEventListener('submit', handleTransactionSubmit);
                 window.addEventListener('beforeunload', function(e) {
-                    // Ne pas afficher de message personnalisé, mais le navigateur en affiche un par défaut si on annule
                     e.preventDefault();
                     e.returnValue = '';
                 });
             }
 
             // ============================================================
-            // 6. CAPITAL MANAGEMENT (corrigé)
+            // 6. CAPITAL MANAGEMENT (avec transactions)
             // ============================================================
             function getCapitalStats() {
                 const initial = state.settings.initialCapital || 0;
-                // Somme des profits réels des paris terminés (non-pending)
+                // Somme des profits réels des paris terminés
                 let totalRealizedProfit = 0;
                 let blocked = 0;
                 let totalCapitalEngaged = 0;
@@ -1524,7 +1639,6 @@
                     if (b.status === 'pending') {
                         blocked += (parseFloat(b.capital) || 0);
                     } else {
-                        // Pour les paris terminés, on ajoute le profit réel (peut être négatif)
                         const profit = parseFloat(b.realProfit) || 0;
                         totalRealizedProfit += profit;
                         totalCapitalEngaged += (parseFloat(b.capital) || 0);
@@ -1534,8 +1648,17 @@
                     }
                 });
 
-                // Capital actuel = capital initial + somme des profits réalisés
-                const currentTotal = initial + totalRealizedProfit;
+                // Ajustement des transactions (dépôts - retraits)
+                let totalDepots = 0,
+                    totalRetraits = 0;
+                state.transactions.forEach(tx => {
+                    if (tx.type === 'depot') totalDepots += parseFloat(tx.amount) || 0;
+                    else if (tx.type === 'retrait') totalRetraits += parseFloat(tx.amount) || 0;
+                });
+                const ajustement = totalDepots - totalRetraits;
+
+                // Capital total = initial + profits + ajustement
+                const currentTotal = initial + totalRealizedProfit + ajustement;
                 const available = currentTotal - blocked;
 
                 return {
@@ -1549,6 +1672,9 @@
                     canceledCount: canceledCount,
                     totalBets: state.surebets.length,
                     pendingCount: state.surebets.filter(b => b.status === 'pending').length,
+                    totalDepots: totalDepots,
+                    totalRetraits: totalRetraits,
+                    ajustement: ajustement,
                 };
             }
 
@@ -1557,7 +1683,7 @@
             }
 
             // ============================================================
-            // 7. DASHBOARD (avec nouvelle logique)
+            // 7. DASHBOARD (avec transactions)
             // ============================================================
             function refreshDashboard() {
                 const stats = getCapitalStats();
@@ -1660,7 +1786,7 @@
                 updateDailyProfitChart();
             }
 
-            // ---- Chart helpers (avec données filtrées) ----
+            // ---- Chart helpers (inchangés) ----
             function getChart(ctxId) {
                 if (charts[ctxId]) { charts[ctxId].destroy(); }
                 const ctx = document.getElementById(ctxId).getContext('2d');
@@ -1674,11 +1800,24 @@
                 const sorted = [...bets].sort((a, b) => new Date(a.date) - new Date(b.date));
                 const labels = sorted.map(b => b.date.slice(5));
                 let cum = state.settings.initialCapital || 0;
+                // On ajoute l'ajustement des transactions au début (cumulatif)
+                // Mais on veut l'évolution dans le temps : on ajoute l'effet des transactions à la date correspondante ?
+                // Pour simplifier, on part du capital initial + ajustement total (déjà pris en compte dans cum)
+                // Mais les transactions ont des dates, on pourrait les intégrer dans la courbe. Pour rester simple, on ne les inclut pas dans le graphique.
+                // On ajoute simplement la valeur initiale + ajustement au début.
+                const stats = getCapitalStats();
+                // On utilise le capital total actuel comme point de départ, mais on pourrait afficher l'ajustement.
+                // On va juste utiliser les profits pour la courbe.
                 const data = sorted.map(b => { cum += (b.realProfit || 0); return cum; });
                 if (data.length === 0) {
-                    data.push(state.settings.initialCapital || 0);
-                    labels.push('Départ');
+                    data.push(stats.total); // capital actuel
+                    labels.push('Aujourd\'hui');
+                } else {
+                    // Ajouter le capital initial avant les paris
+                    data.unshift(state.settings.initialCapital || 0);
+                    labels.unshift('Départ');
                 }
+                // On pourrait ajouter un point pour l'ajustement net mais on simplifie.
                 charts.chartCapital = new Chart(ctx, {
                     type: 'line',
                     data: { labels: labels, datasets: [{ label: 'Capital', data: data, borderColor: '#2563EB',
@@ -1739,7 +1878,7 @@
             }
 
             // ============================================================
-            // 8. MOTEUR DE CALCUL SUREBET (correction tolérance retours)
+            // 8. MOTEUR DE CALCUL SUREBET (inchangé)
             // ============================================================
             function calculateSureBet(oddsA, oddsB, capital, commissionPct, rounding, stakeAOverride, stakeBOverride) {
                 const inv = (1 / oddsA) + (1 / oddsB);
@@ -1824,7 +1963,6 @@
                     result.error = 'Erreur : mises négatives ou nulles';
                     result.isSurebet = false;
                 }
-                // Tolérance relative de 0.5% sur le retour
                 const avgReturn = (returnA + returnB) / 2;
                 const diff = Math.abs(returnA - returnB);
                 if (avgReturn > 0 && (diff / avgReturn) > 0.005) {
@@ -2020,7 +2158,7 @@
             document.getElementById('calcBtn').addEventListener('click', autoRecalc);
 
             // ============================================================
-            // 10. ENREGISTREMENT (correction ID)
+            // 10. ENREGISTREMENT (inchangé)
             // ============================================================
             document.getElementById('saveBtn').addEventListener('click', async function() {
                 const result = currentCalcResult;
@@ -2070,7 +2208,6 @@
                     realProfit: null,
                 };
 
-                // 🔥 CORRECTION : récupérer l'ID généré
                 const id = await dbPut('surebets', entry);
                 entry.id = id;
                 state.surebets.push(entry);
@@ -2084,7 +2221,7 @@
             });
 
             // ============================================================
-            // 11. HISTORIQUE avec pagination
+            // 11. HISTORIQUE (inchangé)
             // ============================================================
             let filteredHistory = [];
 
@@ -2161,7 +2298,6 @@
                         </tr>`;
                 }).join('');
 
-                // Attacher événements
                 tbody.querySelectorAll('.validate-btn').forEach(btn => {
                     btn.addEventListener('click', () => updateBetStatus(Number(btn.dataset.id), 'completed',
                         'grossProfit'));
@@ -2183,13 +2319,11 @@
                     btn.addEventListener('click', () => openDetailModal(Number(btn.dataset.id)));
                 });
 
-                // Pagination info
                 document.getElementById('pageInfo').textContent = `Page ${currentPage} / ${totalPages}`;
                 document.getElementById('prevPage').disabled = (currentPage === 1);
                 document.getElementById('nextPage').disabled = (currentPage === totalPages);
             }
 
-            // Pagination events
             document.getElementById('prevPage').addEventListener('click', () => {
                 if (currentPage > 1) { currentPage--;
                     renderHistory(); }
@@ -2267,7 +2401,7 @@
             }
 
             // ============================================================
-            // 14. MODAL : MODIFICATION
+            // 14. MODAL : MODIFICATION (inchangé)
             // ============================================================
             function openEditModal(id) {
                 const bet = state.surebets.find(b => b.id === id);
@@ -2328,7 +2462,7 @@
             }
 
             // ============================================================
-            // 15. SUPPRESSION
+            // 15. SUPPRESSION (inchangé)
             // ============================================================
             async function deleteSurebet(id) {
                 if (!confirm('Supprimer définitivement cette SureBet ?')) return;
@@ -2437,7 +2571,104 @@
             });
 
             // ============================================================
-            // 17. SETTINGS (capital initial modifiable)
+            // 17. TRANSACTIONS (NOUVEAU)
+            // ============================================================
+            async function handleTransactionSubmit(e) {
+                e.preventDefault();
+                const type = document.getElementById('txType').value;
+                const amount = parseFloat(document.getElementById('txAmount').value);
+                const reason = document.getElementById('txReason').value.trim();
+                const date = document.getElementById('txDate').value;
+                const time = document.getElementById('txTime').value;
+
+                if (!amount || amount <= 0) {
+                    toast('Montant invalide', 'error');
+                    return;
+                }
+                if (!date) {
+                    toast('Date requise', 'error');
+                    return;
+                }
+
+                const stats = getCapitalStats();
+                if (type === 'retrait' && amount > stats.available) {
+                    toast('Retrait impossible : capital disponible insuffisant (' + stats.available.toFixed(2) + ')',
+                        'error');
+                    return;
+                }
+
+                const tx = {
+                    type: type,
+                    amount: amount,
+                    reason: reason || '',
+                    date: date,
+                    time: time || '00:00',
+                };
+
+                const id = await dbPut('transactions', tx);
+                tx.id = id;
+                state.transactions.push(tx);
+
+                toast((type === 'depot' ? 'Dépôt' : 'Retrait') + ' de ' + amount.toFixed(2) + ' enregistré', 'success');
+                document.getElementById('txAmount').value = '';
+                document.getElementById('txReason').value = '';
+                renderTransactions();
+                refreshDashboard();
+                updateCapitalDisplay();
+            }
+
+            function renderTransactions() {
+                const container = document.getElementById('transactionsList');
+                const stats = getCapitalStats();
+
+                document.getElementById('txTotalDepots').textContent = stats.totalDepots.toFixed(2);
+                document.getElementById('txTotalRetraits').textContent = stats.totalRetraits.toFixed(2);
+
+                if (state.transactions.length === 0) {
+                    container.innerHTML = `
+                            <div class="empty-state">
+                                <i class="fas fa-inbox"></i>
+                                <p>Aucune transaction</p>
+                            </div>
+                        `;
+                    return;
+                }
+
+                // Trier par date décroissante
+                const sorted = [...state.transactions].sort((a, b) => new Date(b.date + 'T' + (b.time || '00:00')) - new Date(
+                    a.date + 'T' + (a.time || '00:00')));
+
+                container.innerHTML = sorted.map(tx => {
+                    const sign = tx.type === 'depot' ? '+' : '-';
+                    const amountClass = tx.type === 'depot' ? 'positive' : 'negative';
+                    return `
+                            <div class="transaction-item">
+                                <div class="info">
+                                    <span class="date">${tx.date} ${tx.time || ''}</span>
+                                    <span class="reason">${tx.reason || ''}</span>
+                                </div>
+                                <div class="amount ${amountClass}">${sign} ${parseFloat(tx.amount).toFixed(2)}</div>
+                                <button class="delete-btn" data-id="${tx.id}" title="Supprimer"><i class="fas fa-trash"></i></button>
+                            </div>
+                        `;
+                }).join('');
+
+                container.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const id = Number(btn.dataset.id);
+                        if (!confirm('Supprimer cette transaction ?')) return;
+                        await dbDelete('transactions', id);
+                        state.transactions = state.transactions.filter(t => t.id !== id);
+                        renderTransactions();
+                        refreshDashboard();
+                        updateCapitalDisplay();
+                        toast('Transaction supprimée', 'warning');
+                    });
+                });
+            }
+
+            // ============================================================
+            // 18. SETTINGS (inchangé)
             // ============================================================
             document.getElementById('settingsCapitalBtn').addEventListener('click', async () => {
                 const val = parseFloat(document.getElementById('settingsCapital').value);
@@ -2452,9 +2683,13 @@
                 toast('Capital initial mis à jour : ' + val.toFixed(2), 'success');
             });
 
-            // Export / Import / Reset (inchangé)
             document.getElementById('exportJSON').addEventListener('click', () => {
-                const data = { surebets: state.surebets, bookmakers: state.bookmakers, settings: state.settings };
+                const data = {
+                    surebets: state.surebets,
+                    bookmakers: state.bookmakers,
+                    transactions: state.transactions,
+                    settings: state.settings
+                };
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -2500,6 +2735,10 @@
                         for (const b of data.bookmakers) { await dbPut('bookmakers', b); }
                         state.bookmakers = await dbGetAll('bookmakers');
                     }
+                    if (data.transactions) {
+                        for (const t of data.transactions) { await dbPut('transactions', t); }
+                        state.transactions = await dbGetAll('transactions');
+                    }
                     if (data.settings) {
                         await dbPut('settings', { id: 'main', ...data.settings });
                         state.settings = data.settings;
@@ -2508,6 +2747,7 @@
                     refreshDashboard();
                     renderHistory();
                     renderBookmakers();
+                    renderTransactions();
                     populateBookmakerSelects();
                     updateCapitalDisplay();
                 } catch (err) {
@@ -2519,7 +2759,7 @@
 
             document.getElementById('resetData').addEventListener('click', async () => {
                 if (!confirm('⚠️ Réinitialiser toutes les données ?')) return;
-                const stores = ['surebets', 'bookmakers', 'settings'];
+                const stores = ['surebets', 'bookmakers', 'settings', 'transactions'];
                 for (const store of stores) {
                     const items = await dbGetAll(store);
                     for (const item of items) {
@@ -2528,6 +2768,7 @@
                 }
                 state.surebets = [];
                 state.bookmakers = [];
+                state.transactions = [];
                 state.settings = { currency: 'CDF', lang: 'fr', initialCapital: 0 };
                 toast('Données réinitialisées', 'warning');
                 document.getElementById('setupOverlay').classList.remove('hidden');
@@ -2546,7 +2787,7 @@
             });
 
             // ============================================================
-            // 18. INIT
+            // 19. INIT
             // ============================================================
             loadData();
 
