@@ -2240,10 +2240,18 @@ const Utils = {
     },  
     cleanTeamName(name) {  
         if (!name) return null;  
-        let cleaned = name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '')  
+        const base = name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        let cleaned = base  
             .replace(/\b(FC|SC|AS|US|CS|AC|SS|GS|CF|CD|UD|SD|RS|SK|FK|IF|BK|FF|IK|SK|AIK|FFK|KIF|VfL|VfB|SV|TSV|FSV|KSV|HSV|BVB|SGE|RCD|RSC|USC|USG|SSC|ACF|SFC|AFC|NFC|WFC|MFC|CFC|SUD|NEC|PEC|RKC|FCV|KVC|KRC|KSC|SVR|BSC|HFC|FCS|FCH|FCM|FCN|FCI)\b/gi, '')  
             .replace(/\b(Athletic|Club|Deportivo|Real|Sporting|Union|Racing|Betis|Espanyol|Sport|Sociedad|Athletic|Cultural|Leonesa|Numancia|Albacete|Almeria|Cadiz|Eibar|Elche|Getafe|Girona|Granada|Huesca|Leganes|Levante|Mallorca|Osasuna|Rayo|Sabadell|Tenerife|Valladolid|Zaragoza)\b/gi, '')  
             .replace(/\s+/g, ' ').replace(/\./g, '').trim();  
+        // CORRECTIF — de nombreux clubs (Getafe, Cadiz, Levante, Mallorca, Betis,
+        // Osasuna, Valladolid, etc.) portent EXACTEMENT un des mots que la règle
+        // ci-dessus retire (censée ne retirer que des préfixes génériques comme
+        // "Real"/"Athletic"/"Deportivo"). Sans ce filet de sécurité, leur nom
+        // entier était effacé -> chaîne vide -> rejet en cascade ("missing_team")
+        // de tous les matchs de ces équipes, alors que la ligne CSV était valide.
+        if (!cleaned) cleaned = base.replace(/\s+/g, ' ').replace(/\./g, '').trim();
         const specials = {  
             'manchester city': 'Manchester City', 'man city': 'Manchester City', 'mancity': 'Manchester City',  
             'barcelona': 'Barcelona', 'fc barcelona': 'Barcelona', 'barca': 'Barcelona',  
@@ -4116,7 +4124,7 @@ const DB = {
                     try {
                         if (typeof buildImportedSportsPlanV29 !== 'function') throw errorFor('sports_reconciliation_failed');
                         const invalidState = details => Object.assign(new Error('invalid_sports_reconciliation_state'), { code: 'invalid_sports_reconciliation_state', details });
-                        const authority = snapshotStrictJSONData(snapshots, { maxDepth: 64, depthOffset: 2, maxNodes: 100000, maxProperties: 600000, validateOnly: true, forbiddenKeys: ['__proto__','prototype','constructor'] }, invalidState);
+                        const authority = snapshotStrictJSONData(snapshots, { maxDepth: 64, depthOffset: 2, maxNodes: 5000000, maxProperties: 20000000, validateOnly: true, forbiddenKeys: ['__proto__','prototype','constructor'] }, invalidState);
                         const built = buildImportedSportsPlanV29(authority.matches, authority.teams, authority.leagues, authority.leagueAverages, authority.leagueProfiles);
                         authoritativeMatchCount = built.matches.length;
                         const { matches: ignoredMatches, ...writableState } = built;
@@ -7674,7 +7682,7 @@ const BacktestCore = (() => {
             robustness:{top1AccuracyStdDevAcrossLeagues:stdDev(leagueAccuracies),leagueCount:byLeague.length,
                 note:'Écart-type du Top-1 Accuracy entre championnats — une faible dispersion indique une performance stable, pas seulement un Top-1 global élevé (Prompt §3 : le Top-1 seul n\'est jamais l\'unique mesure de qualité).'}};
     }
-    function run(rawMatches,options={}){
+    async function run(rawMatches,options={}){
         const prepared=prepareHistory(clone(Array.isArray(rawMatches)?rawMatches:[])),items=[],matchMap=new Map(),leagueReports=[],predictionAudits=[];
         // CORRECTIF ANTI-FUITE CALIBRATION (additif, lecture seule) : `items` /
         // `countMarketItems` restent réservés au segment TEST (verrouillé, une seule
@@ -7769,7 +7777,7 @@ const BacktestCore = (() => {
                 for(const match of group.matches){addHistory(match,teams,history,eloState);if(empiricalTrackers)updateEmpiricalTrackers(empiricalTrackers,match);if(h2hIndex){const key=h2hKey(match.homeTeamId,match.awayTeamId);if(!h2hIndex.has(key))h2hIndex.set(key,[]);h2hIndex.get(key).push(match);}}
             }
         };
-        leagues.forEach((league,index)=>{
+        for (const [index, league] of leagues.entries()) {
             const leagueWeightOverride=_optimizedWeightsOverride(league.leagueName); // AJOUT ADDITIF — calculé une seule fois par championnat, réutilisé par causalWeights() et par leagueReports.push() ci-dessous
             const leagueManualOverride=options.manualOverrides?.[league.leagueName]||null;
             const warmupSplit=splitWarmup(dateGroups(league.matches)),teams=new Map(),eloState=new Map(),history=[],performance=Object.fromEntries(PredictiveCoreV30.MODEL_NAMES.map(model=>[model,{correct:0,brier:0,count:0}]));
@@ -7912,7 +7920,8 @@ const BacktestCore = (() => {
                 weightsUsed: leagueManualOverride?.weights || leagueWeightOverride || null,
                 configurationMode: leagueManualOverride ? 'MANUELLE' : 'AUTOMATIQUE'});
             if(typeof options.onProgress==='function')options.onProgress({completed:index+1,total:leagues.length});
-        });
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
 
         // ═══════════════════════════════════════════════════════════════
         // VALIDATION — "Calibrer correctement, vraiment" : jusqu'ici,
@@ -8095,8 +8104,8 @@ const BacktestCore = (() => {
             validationExactScoreObservations:validationExactScoreItems,
             matchIndex:matchMap};
     }
-    function runAudited(rawMatches,options={}){
-        const report=run(rawMatches,options);
+    async function runAudited(rawMatches,options={}){
+        const report=await run(rawMatches,options);
         report.exclusions=[...report.prepared.exclusions];
         for(const league of report.leagueReports){
             if(league.warmupActualCount)report.exclusions.push({code:'league_warmup',count:league.warmupActualCount,league:league.leagueName});
@@ -17648,7 +17657,7 @@ La priorité est la qualité des sélections, pas la quantité.`;
                     }
                 } catch (preOptError) { console.warn('Pré-optimisation des poids impossible (repli sur poids causaux internes pour ce calcul) :', preOptError); }
                 const t0=(typeof performance!=='undefined'&&typeof performance.now==='function')?performance.now():Date.now();
-                report=BacktestCore.run(this.matches,{manualOverrides:manualOverrides||undefined,onProgress:progress=>{const pct=progress.total?Math.round(progress.completed/progress.total*100):100;if(fill)fill.style.width=`${pct}%`;if(text)text.textContent=`⏳ Championnats : ${progress.completed}/${progress.total}`;}});
+                report=await BacktestCore.run(this.matches,{manualOverrides:manualOverrides||undefined,onProgress:progress=>{const pct=progress.total?Math.round(progress.completed/progress.total*100):100;if(fill)fill.style.width=`${pct}%`;if(text)text.textContent=`⏳ Championnats : ${progress.completed}/${progress.total}`;}});
                 const t1=(typeof performance!=='undefined'&&typeof performance.now==='function')?performance.now():Date.now();
                 computeMs=t1-t0;
                 try{await DB.savePreference('backtestCache:'+signature,{report,signature,savedAt:new Date().toISOString(),computeMs});}
@@ -18204,7 +18213,7 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
             try { reconciliationResult=await this._reconcileImportedMatchState(transactionResult); }
             catch(error){console.warn('Réconciliation sportive inattendue',error);reconciliationResult={postCommitReconciliationRequired:true,postCommitErrors:[{step:'sports_reconciliation',code:error?.code||error?.name||'sports_reconciliation_failed'}],reconciliationSteps:[]};}
             const postCommitErrors=[...reconciliationResult.postCommitErrors],reconciliationSteps=[...reconciliationResult.reconciliationSteps];
-            let reconciliation=reconciliationResult.postCommitReconciliationRequired,message=reconciliation?'Import validé dans IndexedDB, mais certaines statistiques sportives nécessitent une réconciliation.':transactionResult.added>0?`Import terminé : ${transactionResult.added} match(s) ajouté(s), ${transactionResult.matchesOddsEnriched||0} enrichi(s), profil basé sur l’historique complet`:transactionResult.matchesOddsEnriched>0?`Import terminé : ${transactionResult.matchesOddsEnriched} match(s) enrichi(s) avec les cotes brutes de clôture`:`Import terminé : ${transactionResult.duplicates} doublon(s), aucune modification`;
+            let reconciliation=reconciliationResult.postCommitReconciliationRequired,message=reconciliation?`Import validé dans IndexedDB, mais certaines statistiques sportives nécessitent une réconciliation. [${postCommitErrors.map(e=>`${e.step}:${e.code}`).join(', ')}]`:transactionResult.added>0?`Import terminé : ${transactionResult.added} match(s) ajouté(s), ${transactionResult.matchesOddsEnriched||0} enrichi(s), profil basé sur l’historique complet`:transactionResult.matchesOddsEnriched>0?`Import terminé : ${transactionResult.matchesOddsEnriched} match(s) enrichi(s) avec les cotes brutes de clôture`:`Import terminé : ${transactionResult.duplicates} doublon(s), aucune modification`;
             if(!this._safeMatchImportNotify(message,reconciliation?'alert':'success')){postCommitErrors.push({step:'notification',code:'notification_unavailable'});reconciliation=true;}
             return{...transactionResult,postCommitReconciliationRequired:reconciliation,postCommitErrors,reconciliationSteps};
         } finally {this._matchImportLocked=false;this._lockMatchImportControls(false);}
