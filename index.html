@@ -1757,6 +1757,12 @@
                     <div class="progress-bar">  
                         <div class="fill" id="backtestProgressFill" style="width:0%;"></div>  
                     </div>  
+                    <!-- PHASE 6 — MODE DIAGNOSTIC (§4 du cahier des charges) : rempli par
+                         App.runBacktest via BacktestCore.run(options.onDiagnostic), mis à
+                         jour à la même cadence que le yield adaptatif (~toutes les 45ms de
+                         travail), jamais plus souvent. Purement informatif, aucun impact
+                         sur le calcul lui-même. -->
+                    <div class="bt-diagnostic-panel" id="backtestDiagnosticPanel" style="font-size:.78em;opacity:.85;margin-top:6px;line-height:1.5;"></div>  
                 </div>  
                 <div id="performanceSummary" class="bt-center"></div>  
             </div>  
@@ -2178,9 +2184,19 @@ const Utils = {
         if (!clean) return null;
         let year, month, day;
         const european = clean.match(/^(\d{2})([\/-])(\d{2})\2(\d{4})$/);
+        // CORRECTIF — anciennes saisons football-data.co.uk au format dd/mm/yy
+        // (année sur 2 chiffres, ex. "04/08/17"), jusqu'ici entièrement rejetées
+        // ("invalid_date" sur 100% des lignes) car seule l'année à 4 chiffres
+        // était acceptée. Pivot standard : yy<50 -> 20yy, yy>=50 -> 19yy (couvre
+        // 1950-2049, largement suffisant pour tout historique football réel).
+        const europeanShortYear = european ? null : clean.match(/^(\d{2})([\/-])(\d{2})\2(\d{2})$/);
         const iso = clean.match(/^(\d{4})-(\d{2})-(\d{2})(?:(?:T| )(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(Z|[+-](\d{2}):(\d{2}))?)?$/);
         if (european) {
             day = Number(european[1]); month = Number(european[3]); year = Number(european[4]);
+        } else if (europeanShortYear) {
+            day = Number(europeanShortYear[1]); month = Number(europeanShortYear[3]);
+            const shortYear = Number(europeanShortYear[4]);
+            year = shortYear < 50 ? 2000 + shortYear : 1900 + shortYear;
         } else if (iso) {
             year = Number(iso[1]); month = Number(iso[2]); day = Number(iso[3]);
             if (iso[4] !== undefined) {
@@ -7563,16 +7579,19 @@ const BacktestCore = (() => {
         const ou25Calibration=calibration(ou25CalibrationItems);
         const overall=summary(items),allMarketsCalibration=calibration(items.map(item=>({p:item.modelProbability,y:item.actualOutcome}))),oneXTwoCalibration=calibration(oneXTwoCalibrationItems),byMarket=grouped(items,item=>item.marketId),calibrationByMarket=grouped(items,item=>item.marketId,rows=>{const cal=calibration(rows.map(item=>({p:item.modelProbability,y:item.actualOutcome})));return{calibrationError:cal.error,calibrationBins:cal.bins,calibrationObservations:cal.observations,calibrationExcluded:cal.excluded};});return{...counters,...overall,predictiveCoverage:counters.postWarmupMatches?counters.testedMatches/counters.postWarmupMatches:null,accuracy1X2:count?correct/count:null,confusion1X2:confusion,brierScore1X2:matches.size?brier/matches.size:null,logLoss1X2:matches.size?loss/matches.size:null,accuracyOU25:ou25Items.length?ou25Correct/ou25Items.length:null,brierScoreOU25:ou25Items.length?ou25Brier/ou25Items.length:null,logLossOU25:ou25Items.length?ou25Loss/ou25Items.length:null,calibrationErrorOU25:ou25Calibration.error,calibrationBins:allMarketsCalibration.bins,calibrationError:allMarketsCalibration.error,calibrationBinsAllMarkets:allMarketsCalibration.bins,calibrationErrorAllMarkets:allMarketsCalibration.error,calibrationObservationsAllMarkets:allMarketsCalibration.observations,calibrationExcludedAllMarkets:allMarketsCalibration.excluded,calibrationBins1X2:oneXTwoCalibration.bins,calibrationError1X2:oneXTwoCalibration.error,calibrationObservations1X2:oneXTwoCalibration.observations,calibrationExcluded1X2:oneXTwoCalibration.excluded,calibrationByMarket,byLeague:grouped(items,item=>item.leagueName),bySeason:grouped(items,item=>item.season),byMarket,bySelection:grouped(items,item=>item.selectionId),byTeam:grouped(items,item=>item.homeTeamName),bySource:grouped(items,item=>item.probabilitySource),chronology:grouped(items,item=>item.dateKey)};}
 
-    function modelCorrelationAudit(predictionAudits){
-        const byModel={};
-        for(const{audit}of predictionAudits){
-            for(const model of PredictiveCoreV30.MODEL_NAMES){
-                const pred=PredictiveCoreV30.normalizePrediction(audit.modelPredictions[model]);
-                if(!pred)continue;
-                if(!byModel[model])byModel[model]=[];
-                byModel[model].push(pred.p1);
-            }
-        }
+    // PHASE 8 — STREAMING (audit mémoire) : cette fonction recevait auparavant
+    // `predictionAudits`, un tableau BRUT {matchIdentity,dateKey,weightsBefore,audit}
+    // pour CHAQUE match TEST (audit = retour complet de PredictiveCoreV30.predict :
+    // matrices, tous les modèles évalués, diagnostics), et reconstruisait ici
+    // `byModel` en n'en extrayant que audit.modelPredictions[model].p1. Cette
+    // extraction est désormais faite AU FIL DE L'EAU, match par match, au point
+    // d'appel dans run() (voir `modelCorrelationSeries`) — avec exactement la
+    // même fonction PredictiveCoreV30.normalizePrediction, dans le même ordre de
+    // matchs, donc les mêmes valeurs p1 dans le même ordre par modèle. La fonction
+    // reçoit donc maintenant directement `byModel` (déjà construit) : AUCUNE
+    // formule de corrélation n'est modifiée ci-dessous (Pearson, seuils de risque
+    // de double comptage, tri des paires — strictement identiques à avant).
+    function modelCorrelationAudit(byModel){
         const models=Object.keys(byModel).filter(m=>byModel[m].length>=10);
         const pearson=(a,b)=>{const n=Math.min(a.length,b.length);if(n<2)return null;const av=a.slice(0,n),bv=b.slice(0,n);const meanA=av.reduce((s,v)=>s+v,0)/n,meanB=bv.reduce((s,v)=>s+v,0)/n;let num=0,denA=0,denB=0;for(let i=0;i<n;i++){const da=av[i]-meanA,db=bv[i]-meanB;num+=da*db;denA+=da*da;denB+=db*db;}const den=Math.sqrt(denA*denB);return den>0?num/den:null;};
         const pairs=[];
@@ -7683,7 +7702,75 @@ const BacktestCore = (() => {
                 note:'Écart-type du Top-1 Accuracy entre championnats — une faible dispersion indique une performance stable, pas seulement un Top-1 global élevé (Prompt §3 : le Top-1 seul n\'est jamais l\'unique mesure de qualité).'}};
     }
     async function run(rawMatches,options={}){
-        const prepared=prepareHistory(clone(Array.isArray(rawMatches)?rawMatches:[])),items=[],matchMap=new Map(),leagueReports=[],predictionAudits=[];
+        const prepared=prepareHistory(clone(Array.isArray(rawMatches)?rawMatches:[])),items=[],matchMap=new Map(),leagueReports=[],modelCorrelationSeries={};
+        // CORRECTIF STABILITÉ MOBILE — compteur partagé utilisé par runSegment()
+        // pour rendre la main au navigateur régulièrement PENDANT le calcul d'un
+        // même championnat (et pas seulement entre deux championnats) : un seul
+        // championnat volumineux suffisait à bloquer le fil principal assez
+        // longtemps pour qu'iOS tue la page.
+        let yieldCounter=0;
+        // PHASE 6 — MODE DIAGNOSTIC (additif, lecture seule, n'affecte aucun calcul).
+        // `diagState` est mis à jour en continu (dernière étape, dernier match,
+        // vitesse) et exposé de DEUX façons : (1) callback options.onDiagnostic,
+        // rappelée à chaque cession de main au navigateur (même cadence que le
+        // yield adaptatif ci-dessous, donc jamais plus coûteuse que lui) ; (2)
+        // globalThis.__RedProBacktestDiagnostic, une snapshot lisible depuis la
+        // console même si la promesse run() ne se résout jamais (crash/OOM) —
+        // c'est le seul moyen de savoir où un crash réel s'est produit, puisqu'un
+        // crash empêche par définition le `return` normal de porter l'info.
+        const now_=()=>(typeof performance!=='undefined'&&typeof performance.now==='function')?performance.now():Date.now();
+        // PHASE 7 — LOTS (orchestration LOGIQUE de progression/checkpoint,
+        // demande explicite : "lots = frontières logiques de progression/
+        // checkpoint UI, une seule exécution continue du moteur, aucun second
+        // appel, aucune réinitialisation d'état"). BATCH_SIZE ne pilote AUCUN
+        // calcul : il sert uniquement à compter, au fil de l'eau, les matchs
+        // déjà traversés par le moteur (warmup+train+validation+test, dans
+        // l'ordre exact où celui-ci les traite déjà, championnat par
+        // championnat) pour produire un affichage "LOT X/N" et un point de
+        // reprise/checkpoint tous les ~5000 matchs. Voir advanceLot() plus bas.
+        const BATCH_SIZE=5000;
+        const totalLots=prepared.historicalMatches>0?Math.ceil(prepared.historicalMatches/BATCH_SIZE):0;
+        const diagState={status:'EN_COURS',phase:'PRÉPARATION',leagueName:null,leagueIndex:0,leagueTotal:0,matchesDone:0,matchesTotal:prepared.historicalMatches,lastMatchIdentity:null,lastDateKey:null,lastError:null,startedAt:now_(),elapsedMs:0,matchesPerMinute:0,
+            batchSize:BATCH_SIZE,totalLots,currentLot:totalLots>0?1:0,matchesInLot:0,lotsCompleted:0,lotMatchesProcessed:0,lotStatus:totalLots>0?'EN_COURS':'AUCUN_MATCH'};
+        if(typeof globalThis!=='undefined')globalThis.__RedProBacktestDiagnostic=diagState;
+        let lastYieldTs=now_();
+        const reportDiag=()=>{diagState.elapsedMs=now_()-diagState.startedAt;diagState.matchesPerMinute=diagState.elapsedMs>0?Math.round(diagState.matchesDone/(diagState.elapsedMs/60000)):0;if(typeof options.onDiagnostic==='function'){try{options.onDiagnostic({...diagState});}catch(e){}}};
+        // Yield ADAPTATIF (remplace le compteur fixe "toutes les 25 dates") :
+        // rend la main dès que ~45ms se sont écoulées depuis la dernière pause,
+        // quel que soit le nombre de matchs/dates traités entre-temps. Un
+        // compteur fixe suppose un coût par itération constant ; ce n'est pas le
+        // cas ici (Monte Carlo 20000 tirages × taille variable de l'historique),
+        // donc un même "toutes les 25 groupes" pouvait bloquer le fil principal
+        // quelques millisecondes sur un petit championnat... ou plusieurs
+        // secondes sur un gros, selon le nombre de matchs par date. Le seuil
+        // temporel garantit un budget de blocage borné quelle que soit la forme
+        // des données, ce qui est la cause directe du symptôme "page figée/tuée
+        // par l'OS" sur mobile pour de gros volumes.
+        const maybeYield=async()=>{const t=now_();if(t-lastYieldTs>=45){reportDiag();await new Promise(resolve=>setTimeout(resolve,0));lastYieldTs=now_();}};
+        // PHASE 7 — avance le compteur de lot logique d'UN match. Appelée une
+        // seule fois par match réellement consommé par le moteur (warmup
+        // compris), toujours au même endroit INCONDITIONNEL que addHistory()
+        // (jamais conditionnée par le succès/échec d'une prédiction), pour que
+        // le total corresponde exactement à prepared.historicalMatches, quel
+        // que soit ce nombre (cas non multiple de 5000 inclus : le dernier lot
+        // se ferme naturellement dès que lotMatchesProcessed atteint le total).
+        // Pur compteur + callback UI : ne lit ni ne modifie aucun état
+        // walk-forward (teams/eloState/history/performance/empiricalTrackers/
+        // h2hIndex), aucune probabilité, aucun marché, aucune répartition
+        // TRAIN/VALIDATION/TEST.
+        const advanceLot=()=>{
+            if(diagState.totalLots<=0)return;
+            diagState.lotMatchesProcessed++;diagState.matchesInLot++;
+            const lotFull=diagState.matchesInLot>=diagState.batchSize,isLastMatch=diagState.lotMatchesProcessed>=diagState.matchesTotal;
+            if(lotFull||isLastMatch){
+                diagState.lotsCompleted++;diagState.lotStatus='LOT_TERMINE';
+                if(typeof options.onBatch==='function'){try{options.onBatch({type:'LOT_TERMINE',lot:diagState.currentLot,totalLots:diagState.totalLots,matchesInLot:diagState.matchesInLot,batchSize:diagState.batchSize,matchesProcessed:diagState.lotMatchesProcessed,totalMatches:diagState.matchesTotal});}catch(e){}}
+                if(!isLastMatch){
+                    diagState.currentLot++;diagState.matchesInLot=0;diagState.lotStatus='EN_COURS';
+                    if(typeof options.onBatch==='function'){try{options.onBatch({type:'LOT_DEBUT',lot:diagState.currentLot,totalLots:diagState.totalLots,batchSize:diagState.batchSize,matchesProcessed:diagState.lotMatchesProcessed,totalMatches:diagState.matchesTotal});}catch(e){}}
+                }
+            }
+        };
         // CORRECTIF ANTI-FUITE CALIBRATION (additif, lecture seule) : `items` /
         // `countMarketItems` restent réservés au segment TEST (verrouillé, une seule
         // passe) et ne sont PAS modifiés ci-dessous — aucune métrique existante
@@ -7755,8 +7842,10 @@ const BacktestCore = (() => {
         const hasMarketModelEngine=typeof MarketModelEngine!=='undefined',countMarketItems=[],countMarketLeagueAudits=[],exactScoreItems=[];
         let warmupMatches=0,postWarmupMatches=0,trainMatchesTotal=0,validationMatchesTotal=0,insufficientHistoryMatches=0,testedMatches=0,predictionErrors=0;
         const leagues=[...prepared.leagues.values()].sort((a,b)=>a.leagueId.localeCompare(b.leagueId));
-        const runSegment=(groups,teams,eloState,history,performance,mode,collect,leagueName,empiricalTrackers,h2hIndex)=>{
+        const runSegment=async(groups,teams,eloState,history,performance,mode,collect,leagueName,empiricalTrackers,h2hIndex)=>{
+            diagState.phase=mode.phase||diagState.phase;diagState.leagueName=leagueName;
             for(const group of groups){
+                yieldCounter++;await maybeYield();
                 const profile=mode.profile(history),weights=causalWeights(performance,leagueName,options.manualOverrides?.[leagueName]?.weights),dateAudits=[];
                 for(const match of group.matches){
                     matchMap.set(match.matchIdentity,match);const home=teams.get(match.homeTeamId)||[],away=teams.get(match.awayTeamId)||[];
@@ -7765,7 +7854,13 @@ const BacktestCore = (() => {
                         const prediction=probabilities(teamFeatures(match.homeTeamId,home,eloState.get(match.homeTeamId)),teamFeatures(match.awayTeamId,away,eloState.get(match.awayTeamId)),profile,{match,history,weights,monteCarloSims:options.monteCarloSims,h2hIndex});
                         dateAudits.push({audit:prediction.audit,match});
                         mode.onMatch({match,prediction,weights,homeHistory:home,awayHistory:away});
-                    }catch(error){predictionErrors++;if(typeof options.onPredictionError==='function')options.onPredictionError({match,error});}
+                        diagState.matchesDone++;diagState.lastMatchIdentity=match.matchIdentity;diagState.lastDateKey=match.dateKey;
+                    }catch(error){predictionErrors++;diagState.lastError={message:error?.message||String(error),matchIdentity:match.matchIdentity,dateKey:match.dateKey,phase:diagState.phase};if(typeof options.onPredictionError==='function')options.onPredictionError({match,error});}
+                    // Yield par MATCH (pas seulement par groupe de dates) : une seule
+                    // date avec énormément de matchs (multi-championnats le même jour,
+                    // gros volume) ne doit jamais, à elle seule, dépasser le budget de
+                    // blocage de ~45ms défini par maybeYield().
+                    await maybeYield();
                 }
                 updatePerformance(performance,dateAudits);
                 // AJOUT ADDITIF — PHASE 2 : mise à jour des compteurs empiriques APRÈS
@@ -7774,10 +7869,12 @@ const BacktestCore = (() => {
                 // AJOUT ADDITIF — PHASE 8 : h2hIndex mis à jour au MÊME moment (même
                 // garantie anti-fuite intra-journée que les deux lignes ci-dessus —
                 // jamais avant la lecture du groupe courant, ligne 7757).
-                for(const match of group.matches){addHistory(match,teams,history,eloState);if(empiricalTrackers)updateEmpiricalTrackers(empiricalTrackers,match);if(h2hIndex){const key=h2hKey(match.homeTeamId,match.awayTeamId);if(!h2hIndex.has(key))h2hIndex.set(key,[]);h2hIndex.get(key).push(match);}}
+                for(const match of group.matches){addHistory(match,teams,history,eloState);if(empiricalTrackers)updateEmpiricalTrackers(empiricalTrackers,match);if(h2hIndex){const key=h2hKey(match.homeTeamId,match.awayTeamId);if(!h2hIndex.has(key))h2hIndex.set(key,[]);h2hIndex.get(key).push(match);}advanceLot();}
             }
         };
+        diagState.leagueTotal=leagues.length;
         for (const [index, league] of leagues.entries()) {
+            diagState.leagueIndex=index+1;diagState.leagueName=league.leagueName;diagState.phase='WARMUP';
             const leagueWeightOverride=_optimizedWeightsOverride(league.leagueName); // AJOUT ADDITIF — calculé une seule fois par championnat, réutilisé par causalWeights() et par leagueReports.push() ci-dessous
             const leagueManualOverride=options.manualOverrides?.[league.leagueName]||null;
             const warmupSplit=splitWarmup(dateGroups(league.matches)),teams=new Map(),eloState=new Map(),history=[],performance=Object.fromEntries(PredictiveCoreV30.MODEL_NAMES.map(model=>[model,{correct:0,brier:0,count:0}]));
@@ -7791,7 +7888,7 @@ const BacktestCore = (() => {
             // de `history` à chaque match par un lookup direct (voir probabilities()).
             const h2hIndex=new Map();
             warmupMatches+=warmupSplit.count;postWarmupMatches+=warmupSplit.test.reduce((sum,group)=>sum+group.matches.length,0);
-            for(const group of warmupSplit.warmup)for(const match of group.matches){addHistory(match,teams,history,eloState);updateEmpiricalTrackers(empiricalTrackers,match);{const key=h2hKey(match.homeTeamId,match.awayTeamId);if(!h2hIndex.has(key))h2hIndex.set(key,[]);h2hIndex.get(key).push(match);}matchMap.set(match.matchIdentity,match);}
+            for(const group of warmupSplit.warmup)for(const match of group.matches){addHistory(match,teams,history,eloState);updateEmpiricalTrackers(empiricalTrackers,match);{const key=h2hKey(match.homeTeamId,match.awayTeamId);if(!h2hIndex.has(key))h2hIndex.set(key,[]);h2hIndex.get(key).push(match);}matchMap.set(match.matchIdentity,match);advanceLot();}
             const tvt=splitTrainValTest(warmupSplit.test),leagueCollect={excluded:0};
             // Phase A — un couple (championnat × marché de comptage) est classé une
             // seule fois, sur l'historique complet du championnat (league.matches),
@@ -7804,11 +7901,11 @@ const BacktestCore = (() => {
             countMarketLeagueAudits.push({leagueId:league.leagueId,leagueName:league.leagueName,byStat:leagueCountAudit});
             // TRAIN (60%) : construit uniquement l'historique/les poids causaux, aucune métrique finale mesurée ici.
             const trainMatchesCount=tvt.train.reduce((s,g)=>s+g.matches.length,0);trainMatchesTotal+=trainMatchesCount;
-            runSegment(tvt.train,teams,eloState,history,performance,{profile:h=>leagueProfile(h),onMatch:()=>{}},leagueCollect,league.leagueName,empiricalTrackers,h2hIndex);
+            await runSegment(tvt.train,teams,eloState,history,performance,{phase:'TRAIN',profile:h=>leagueProfile(h),onMatch:()=>{}},leagueCollect,league.leagueName,empiricalTrackers,h2hIndex);
             // VALIDATION (20%) : walk-forward causal, sert UNIQUEMENT à sélectionner la température (grille) par minimisation du log-loss. Jamais utilisée pour mesurer la performance finale.
             const temperatureStats=new Map(CONFIG.temperatureCandidates.map(t=>[t,{sumLogLoss:0,count:0}]));
             let leagueValidationCount=0;
-            runSegment(tvt.validation,teams,eloState,history,performance,{profile:h=>leagueProfile(h),onMatch:({match,prediction,homeHistory,awayHistory})=>{
+            await runSegment(tvt.validation,teams,eloState,history,performance,{phase:'VALIDATION',profile:h=>leagueProfile(h),onMatch:({match,prediction,homeHistory,awayHistory})=>{
                 const combined=prediction.audit.combinedProbabilities;
                 if(!combined)return;
                 const actualIndex=match.FTHG>match.FTAG?0:match.FTHG===match.FTAG?1:2;
@@ -7830,7 +7927,27 @@ const BacktestCore = (() => {
                 // calibration 1X2 (aucune donnée TEST n'entre en jeu dans tous les cas).
                 const valResult=observations(match,prediction,empiricalTrackers);
                 if(!valResult.error){
-                    validationItems.push(...valResult.items);
+                    // PHASE 8 — STREAMING (audit mémoire) : valResult.items reprend la
+                    // même forme complète (~30 champs) que les observations TEST
+                    // (probabilityVector, rawProbabilityVector, weightsUsed, modelsUsed,
+                    // temperatureUsed, engineVersion, tout le bloc empirique P_model/
+                    // P_empirical/P_used, targetOdds, fairOdds*, signalEligible*,
+                    // signalReason*, decisionMode/Reason, teamNames, season...). Recherche
+                    // exhaustive de TOUS les consommateurs de validationItems / de
+                    // report.validationObservations dans ce fichier (recalibrage local
+                    // VALIDATION juste plus bas dans run(), MarketCalibrationRegistry.
+                    // buildFromBacktestReport, _extractMulticlass1X2,
+                    // CalibrationEngineV31.extractFamilyItems/buildFamily,
+                    // App._computeValidationMetricsForLeague → BacktestCore.
+                    // predictiveMetrics) : aucun ne lit jamais que matchIdentity,
+                    // leagueName, marketId, selectionId, probabilityVector (lignes 1X2
+                    // uniquement — déjà `null` pour les autres marchés), modelProbability,
+                    // actualOutcome et dateKey. On ne conserve donc que ces champs ; aucun
+                    // consommateur existant n'est modifié, seule la forme intermédiaire
+                    // (jamais exposée telle quelle à l'UI) est allégée.
+                    for(const vit of valResult.items){
+                        validationItems.push({matchIdentity:vit.matchIdentity,leagueName:vit.leagueName,marketId:vit.marketId,selectionId:vit.selectionId,probabilityVector:vit.probabilityVector,modelProbability:vit.modelProbability,actualOutcome:vit.actualOutcome,dateKey:vit.dateKey});
+                    }
                     // Phase 2E §D : même mesure que TEST (multiclassBrier/logLoss/
                     // top1-3-5), calculée ici sur VALIDATION. N'alimente PAS la
                     // sélection de température ci-dessus (déjà figée plus haut) ni
@@ -7852,11 +7969,20 @@ const BacktestCore = (() => {
                             for(const line of lines){
                                 const marketResult=countResult.markets[`over_under_${line}`];
                                 if(!marketResult)continue;
-                                const actualOver=actualTotal>line,base={matchIdentity:match.matchIdentity,leagueId:match.leagueId,leagueName:match.leagueName,season:match.season,dateKey:match.dateKey,homeTeamName:match.homeTeamName,awayTeamName:match.awayTeamName,marketId:`count_${statKey}`,statKey,statLabel:def.label,line,distributionModel:marketResult.model,sampleSizes:marketResult.echantillon,oddsAvailable:false,oddsStatus:'COTES HISTORIQUES NON DISPONIBLES'};
-                                const overDecision=signal(marketResult.over);
-                                validationCountMarketItems.push({...base,observationId:`${match.matchIdentity}|count_${statKey}|over_${line}`,selectionId:`over_${line}`,selectionLabel:`${def.label} Over ${line}`,modelProbability:marketResult.over,actualOutcome:actualOver,status:actualOver?'correct':'incorrect',signalEligible:overDecision.eligible,signalReason:overDecision.reason,fairOdds:overDecision.fairOdds});
-                                const underDecision=signal(marketResult.under);
-                                validationCountMarketItems.push({...base,observationId:`${match.matchIdentity}|count_${statKey}|under_${line}`,selectionId:`under_${line}`,selectionLabel:`${def.label} Under ${line}`,modelProbability:marketResult.under,actualOutcome:!actualOver,status:!actualOver?'correct':'incorrect',signalEligible:underDecision.eligible,signalReason:underDecision.reason,fairOdds:underDecision.fairOdds});
+                                const actualOver=actualTotal>line,base={marketId:`count_${statKey}`,statKey,dateKey:match.dateKey};
+                                // PHASE 8 — STREAMING (audit mémoire) : mêmes constats que pour
+                                // validationItems ci-dessus — les seuls consommateurs de
+                                // validationCountMarketObservations (buildFromBacktestReport,
+                                // extractFamilyItems, et le recalibrage local VALIDATION plus
+                                // bas dans run()) ne lisent que marketId, statKey, dateKey,
+                                // observationId, selectionId, modelProbability, actualOutcome.
+                                // leagueId/leagueName/season/homeTeamName/awayTeamName/
+                                // selectionLabel/statLabel/line/distributionModel/sampleSizes/
+                                // oddsAvailable/oddsStatus/status/signalEligible/signalReason/
+                                // fairOdds n'étaient lus par aucun d'eux : retirés ici (ils
+                                // restent inchangés pour countMarketItems = TEST, non touché).
+                                validationCountMarketItems.push({...base,observationId:`${match.matchIdentity}|count_${statKey}|over_${line}`,selectionId:`over_${line}`,modelProbability:marketResult.over,actualOutcome:actualOver});
+                                validationCountMarketItems.push({...base,observationId:`${match.matchIdentity}|count_${statKey}|under_${line}`,selectionId:`under_${line}`,modelProbability:marketResult.under,actualOutcome:!actualOver});
                             }
                         }
                     }
@@ -7871,10 +7997,37 @@ const BacktestCore = (() => {
             // réglage manuel explicite ci-dessus) uniquement, une seule passe, aucune
             // ré-optimisation — TEST n'intervient JAMAIS dans ce choix, y compris en mode manuel.
             let leagueTested=0;
-            runSegment(tvt.test,teams,eloState,history,performance,{profile:h=>({...leagueProfile(h),temperature:selectedTemperature}),onMatch:({match,prediction,weights,homeHistory,awayHistory})=>{
+            await runSegment(tvt.test,teams,eloState,history,performance,{phase:'TEST',profile:h=>({...leagueProfile(h),temperature:selectedTemperature}),onMatch:({match,prediction,weights,homeHistory,awayHistory})=>{
                 const result=observations(match,prediction,empiricalTrackers);
                 if(result.error){predictionErrors++;return;}
-                items.push(...result.items);predictionAudits.push({matchIdentity:match.matchIdentity,dateKey:match.dateKey,weightsBefore:{...weights},audit:prediction.audit});testedMatches++;leagueTested++;
+                items.push(...result.items);
+                // PHASE 8 — STREAMING (audit mémoire) : remplace le stockage de
+                // predictionAudits (tableau brut {matchIdentity,dateKey,weightsBefore,
+                // audit complet} pour CHAQUE match TEST — voir ancien commentaire
+                // "PHASE 6 — AUDIT MÉMOIRE" plus bas, qui avait déjà retiré ce
+                // tableau du report final mais le laissait entièrement construit en
+                // mémoire pendant tout le run()). Seul `modelCorrelationAudit` lisait
+                // `audit.modelPredictions[model].p1` via normalizePrediction : on
+                // extrait donc cette valeur ICI, immédiatement, dans le même ordre de
+                // matchs et avec la même fonction de normalisation, au lieu de
+                // conserver l'objet `audit` complet (matrices + tous les modèles) par
+                // match jusqu'à la fin du backtest. `modelCorrelationSeries[model]`
+                // contient donc exactement les mêmes valeurs p1, dans le même ordre,
+                // que l'ancien `byModel[model]` reconstruit depuis predictionAudits —
+                // modelCorrelationAudit() (voir plus haut) reste par ailleurs
+                // inchangée. `weightsBefore`/`dateKey`/`matchIdentity` de l'ancien
+                // predictionAudits n'étaient lus nulle part : ils disparaissent sans
+                // aucun impact (vérifié par recherche exhaustive, cf. ancien commentaire
+                // Phase 6 ci-dessous).
+                if(prediction.audit&&prediction.audit.modelPredictions){
+                    for(const model of PredictiveCoreV30.MODEL_NAMES){
+                        const corrPred=PredictiveCoreV30.normalizePrediction(prediction.audit.modelPredictions[model]);
+                        if(!corrPred)continue;
+                        if(!modelCorrelationSeries[model])modelCorrelationSeries[model]=[];
+                        modelCorrelationSeries[model].push(corrPred.p1);
+                    }
+                }
+                testedMatches++;leagueTested++;
                 // Score exact — MÊME matrice Dixon-Coles que celle utilisée juste
                 // au-dessus pour observations() (1x2/btts/over-under), même match
                 // TEST, même walk-forward causal, isolé par championnat (boucle
@@ -7920,8 +8073,10 @@ const BacktestCore = (() => {
                 weightsUsed: leagueManualOverride?.weights || leagueWeightOverride || null,
                 configurationMode: leagueManualOverride ? 'MANUELLE' : 'AUTOMATIQUE'});
             if(typeof options.onProgress==='function')options.onProgress({completed:index+1,total:leagues.length});
+            reportDiag();
             await new Promise(resolve => setTimeout(resolve, 0));
         }
+        diagState.status='FINALISATION';diagState.phase='CALIBRATION_ET_MÉTRIQUES';reportDiag();
 
         // ═══════════════════════════════════════════════════════════════
         // VALIDATION — "Calibrer correctement, vraiment" : jusqu'ici,
@@ -8091,8 +8246,46 @@ const BacktestCore = (() => {
         // (old financial()/clv/oddsBacktestAllCases/rankings removed - see Phase 1 section A).
         // The report only contains predictive fields (probabilities, calibration,
         // theoretical Fair Odds, real result, metrics) - no historical bookmaker odds.
-        return{config:CONFIG,prepared:{rawCount:prepared.rawCount,historicalMatches:prepared.historicalMatches,exclusions:prepared.errors,conflicts:prepared.conflicts},leagueReports,observations:items,predictionAudits,predictiveMetrics:predictiveMetrics(items,counters),
-            modelCorrelationAudit:modelCorrelationAudit(predictionAudits),countMarketBacktestability:countMarketLeagueAudits,countMarketObservations:countMarketItems,countMarketMetrics:countMarketMetrics(countMarketItems),countMarketOddsAvailability:'COTES HISTORIQUES NON DISPONIBLES \u2014 le backtest sans cote fonctionne, aucune cote historique n\'est mod\u00e9lis\u00e9e pour ces march\u00e9s dans le sch\u00e9ma de donn\u00e9es actuel.',exactScoreObservations:exactScoreItems,exactScoreMetrics:exactScoreMetrics(exactScoreItems),exactScoreOddsAvailability:'COTES HISTORIQUES NON DISPONIBLES \u2014 aucune cote historique de score exact n\'existe dans le sch\u00e9ma de donn\u00e9es actuel ; le backtest sans cote (probabilit\u00e9s, fair odds, r\u00e9sultat r\u00e9el, m\u00e9triques pr\u00e9dictives) fonctionne, le backtest avec cote reste explicitement indisponible.',
+        // PHASE 6 — AUDIT MÉMOIRE (§5 du cahier des charges) : `predictionAudits`
+        // (le tableau BRUT {matchIdentity,dateKey,weightsBefore,audit} pour CHAQUE
+        // match TEST, où `audit` est le retour complet de PredictiveCoreV30.predict
+        // — matrices, tous les modèles évalués, diagnostics...) n'était lu NULLE
+        // PART après ce point : seule `modelCorrelationAudit(predictionAudits)`,
+        // déjà calculée juste au-dessus et déjà incluse ci-dessous sous
+        // `modelCorrelationAudit`, en avait besoin. Vérifié par recherche exhaustive
+        // dans le reste du fichier (aucune lecture de `report.predictionAudits`,
+        // aucune lecture de `.predictionAudits` en dehors de BacktestCore) avant de
+        // le retirer. Il gonflait le rapport final (donc la mémoire retenue, le
+        // cache IndexedDB, et tout ce qui relit ensuite ce rapport) de façon purement
+        // inutile — mesuré : environ 10 à 15% de la taille totale du rapport sur un
+        // backtest de plusieurs milliers de matchs, pour une donnée jamais consultée.
+        // AUCUNE métrique, AUCUN calcul, AUCUN affichage n'est modifié par ce retrait :
+        // `modelCorrelationAudit` (le seul consommateur réel) reste strictement identique.
+        // PHASE 8 — SUITE DE CE CORRECTIF : la Phase 6 ci-dessus n'avait retiré
+        // `predictionAudits` que du report final (`report.predictionAudits`
+        // n'a jamais existé) ; le tableau restait néanmoins entièrement construit
+        // EN MÉMOIRE PENDANT tout le run() (pic mémoire non résolu, notamment
+        // pertinent maintenant que Phase 7 permet des volumes de 10 000 à 100 000+
+        // matchs en une seule exécution continue). Phase 8 supprime `predictionAudits`
+        // lui-même : voir `modelCorrelationSeries` construit au fil de l'eau au point
+        // d'appel TEST (extraction immédiate de audit.modelPredictions[model].p1 via
+        // PredictiveCoreV30.normalizePrediction, au lieu de conserver l'objet `audit`
+        // complet par match). `modelCorrelationAudit()` reçoit désormais directement
+        // ce résultat déjà agrégé par modèle — même calcul, même résultat, mémoire de
+        // pic proportionnelle au nombre de modèles au lieu du nombre de matchs.
+        diagState.status='TERMINÉ';diagState.phase='TERMINÉ';
+        // PHASE 7 — clôture explicite du lot final. `advanceLot()` a déjà fermé
+        // le dernier lot (y compris partiel, ex. 18 500 matchs → lot 4 = 3 500)
+        // au moment où lotMatchesProcessed a atteint matchesTotal ; ce résumé se
+        // contente de figer ces compteurs dans le rapport retourné, pour que
+        // l'appelant (App.runBacktest) puisse afficher "✓ BACKTEST TERMINÉ
+        // X/X matchs, N/N lots terminés" sans dépendre uniquement des callbacks
+        // temps réel (utile notamment pour un résultat servi depuis le cache).
+        const batchSummary={batchSize:diagState.batchSize,totalMatches:diagState.matchesTotal,totalLots:diagState.totalLots,lotsCompleted:diagState.lotsCompleted,matchesProcessed:diagState.lotMatchesProcessed};
+        reportDiag();
+        if(typeof options.onBatch==='function'){try{options.onBatch({type:'BACKTEST_TERMINE',...batchSummary});}catch(e){}}
+        return{config:CONFIG,batchSummary,prepared:{rawCount:prepared.rawCount,historicalMatches:prepared.historicalMatches,exclusions:prepared.errors,conflicts:prepared.conflicts},leagueReports,observations:items,predictiveMetrics:predictiveMetrics(items,counters),
+            modelCorrelationAudit:modelCorrelationAudit(modelCorrelationSeries),countMarketBacktestability:countMarketLeagueAudits,countMarketObservations:countMarketItems,countMarketMetrics:countMarketMetrics(countMarketItems),countMarketOddsAvailability:'COTES HISTORIQUES NON DISPONIBLES \u2014 le backtest sans cote fonctionne, aucune cote historique n\'est mod\u00e9lis\u00e9e pour ces march\u00e9s dans le sch\u00e9ma de donn\u00e9es actuel.',exactScoreObservations:exactScoreItems,exactScoreMetrics:exactScoreMetrics(exactScoreItems),exactScoreOddsAvailability:'COTES HISTORIQUES NON DISPONIBLES \u2014 aucune cote historique de score exact n\'existe dans le sch\u00e9ma de donn\u00e9es actuel ; le backtest sans cote (probabilit\u00e9s, fair odds, r\u00e9sultat r\u00e9el, m\u00e9triques pr\u00e9dictives) fonctionne, le backtest avec cote reste explicitement indisponible.',
             // ANTI-LEAKAGE CALIBRATION FIX (additive): VALIDATION-only observations
             // (never TEST), dedicated to MarketCalibrationRegistry / CalibrationEngineV31.
             // `items`/`countMarketItems`/all metrics above remain strictly the locked TEST segment, unchanged.
@@ -8104,15 +8297,53 @@ const BacktestCore = (() => {
             validationExactScoreObservations:validationExactScoreItems,
             matchIndex:matchMap};
     }
+    // PHASE 9 — CAUSE IDENTIFIÉE DU CRASH/DISPARITION EN FIN DE BACKTEST : cette
+    // fonction (exportée comme `BacktestCore.run`, donc appelée par App pour
+    // CHAQUE backtest, y compris les plus gros) faisait, juste après la fin du
+    // calcul et AVANT tout affichage :
+    //   report.observations.flatMap(item=>[{...item,teamKey:homeTeamName},{...item,teamKey:awayTeamName}])
+    // — c'est-à-dire un CLONE SUPERFICIEL COMPLET de CHAQUE observation TEST,
+    // DEUX FOIS (perspective domicile + extérieur), uniquement pour pouvoir
+    // grouper par équipe. Sur un backtest de plusieurs dizaines/centaines de
+    // milliers d'observations (plusieurs milliers de matchs × ~20 marchés), cela
+    // crée synchrone­ment, sans yield, plusieurs centaines de milliers de NOUVEAUX
+    // objets (~30 champs chacun) en une seule opération bloquante — exactement le
+    // pic mémoire + blocage du thread principal qui explique une PWA tuée par
+    // l'OS juste après la fin du calcul, avant même que l'UI n'ait rendu quoi que
+    // ce soit (§9 du prompt Phase 9 : "grouped()/byTeam crée-t-il des copies ou
+    // seulement des références ? Si copies complètes : cible prioritaire.").
+    // CORRECTIF : `groupByTeamPerspective` ci-dessous fait EXACTEMENT le même
+    // calcul (chaque observation comptée une fois pour son équipe domicile, une
+    // fois pour son équipe extérieure, puis `summary()` appliqué à chaque groupe,
+    // formule inchangée), mais en ne poussant que des RÉFÉRENCES vers les objets
+    // `items` déjà existants dans les tableaux de groupe — zéro clonage, zéro
+    // champ ajouté. Résultat de `report.predictiveMetrics.byTeam` strictement
+    // identique (même clés, mêmes agrégats), calculé sans dupliquer aucune donnée.
+    function groupByTeamPerspective(items){
+        const groups=new Map();
+        for(const item of items){
+            const home=item.homeTeamName;
+            if(!groups.has(home))groups.set(home,[]);
+            groups.get(home).push(item);
+            const away=item.awayTeamName;
+            if(!groups.has(away))groups.set(away,[]);
+            groups.get(away).push(item);
+        }
+        return[...groups].map(([key,rows])=>({key,...summary(rows)})).sort((a,b)=>a.key.localeCompare(b.key));
+    }
     async function runAudited(rawMatches,options={}){
+        console.log('[BT] RUN_START');
         const report=await run(rawMatches,options);
+        console.log('[BT] RUN_FINISHED');
+        console.log('[BT] FINAL_METRICS_START');
         report.exclusions=[...report.prepared.exclusions];
         for(const league of report.leagueReports){
             if(league.warmupActualCount)report.exclusions.push({code:'league_warmup',count:league.warmupActualCount,league:league.leagueName});
             if(league.insufficientHistoryMatches)report.exclusions.push({code:'insufficient_team_history',count:league.insufficientHistoryMatches,league:league.leagueName});
         }
         for(const leagueAudit of report.countMarketBacktestability){for(const[statKey,audit]of Object.entries(leagueAudit.byStat)){if(!audit.backtestable)report.exclusions.push({code:audit.status,league:leagueAudit.leagueName,statKey,coverage:audit.coverage,sample:audit.sample,segment:'count_market'});}}
-        report.predictiveMetrics.byTeam=grouped(report.observations.flatMap(item=>[{...item,teamKey:item.homeTeamName},{...item,teamKey:item.awayTeamName}]),item=>item.teamKey);
+        report.predictiveMetrics.byTeam=groupByTeamPerspective(report.observations);
+        console.log('[BT] FINAL_METRICS_FINISHED');
         return report;
     }
     const predictSnapshot=(home,away,profile,context)=>probabilities(home,away,profile,context).audit;
@@ -11740,6 +11971,7 @@ const BacktestCenterUI = (() => {
 
     // ---------- Mount / API publique ----------
     function mount(report, familyCalibrationReport, selfTests, doubleCounting, leakage, cacheMeta, options) {
+        console.log('[BT] UI_PREPARE_START');
         state.report = report || null;
         state.family = familyCalibrationReport || null;
         state.tests = selfTests || null;
@@ -11755,7 +11987,9 @@ const BacktestCenterUI = (() => {
         // au Dashboard.
         if (!(options && options.preserveTab && state.activeTab)) state.activeTab = 'dashboard';
         if (!(options && options.preserveTab)) state.manualFeedback = null;
+        console.log('[BT] UI_PREPARE_FINISHED');
         render();
+        console.log('[BT] COMPLETE');
     }
     function switchTab(id) {
         state.activeTab = id;
@@ -11774,6 +12008,7 @@ const BacktestCenterUI = (() => {
     }
 
     function render() {
+        console.log('[BT] UI_RENDER_START');
         const container = document.getElementById('performanceSummary');
         if (!container) return;
         if (!state.report) {
@@ -11781,12 +12016,15 @@ const BacktestCenterUI = (() => {
             return;
         }
         const tabsHtml = TABS.map(t => `<button class="bt-tab-btn${t.id === state.activeTab ? ' active' : ''}" data-tab="${t.id}" onclick="BacktestCenterUI.switchTab('${t.id}')">${t.icon} ${esc(t.label)}</button>`).join('');
+        console.log('[BT] DETAIL_RENDER_START');
         const panelsHtml = TABS.map(t => `<div class="bt-panel${t.id === state.activeTab ? ' active' : ''}" id="bt-panel-${t.id}" data-rendered="${t.id === state.activeTab ? '1' : ''}">${t.id === state.activeTab ? renderTabContent(t.id) : ''}</div>`).join('');
+        console.log('[BT] DETAIL_RENDER_FINISHED');
         container.innerHTML = `
             ${renderHeader()}
             <div class="bt-tabs">${tabsHtml}</div>
             ${panelsHtml}
         `;
+        console.log('[BT] UI_RENDER_FINISHED');
     }
 
     function overallStatus() {
@@ -17622,8 +17860,72 @@ La priorité est la qualité des sélections, pas la quantité.`;
     },
 
     async runBacktest(forceRecalculate = false, manualOverrides = null, preserveTab = false) {
-        const content=document.getElementById('performanceSummary'),container=document.getElementById('backtestProgressContainer'),fill=document.getElementById('backtestProgressFill'),text=document.getElementById('backtestProgressText');
-        container?.classList.remove('hidden');if(fill)fill.style.width='0%';if(text)text.textContent='⏳ Préparation de l’historique canonique...';
+        const content=document.getElementById('performanceSummary'),container=document.getElementById('backtestProgressContainer'),fill=document.getElementById('backtestProgressFill'),text=document.getElementById('backtestProgressText'),diagPanel=document.getElementById('backtestDiagnosticPanel');
+        container?.classList.remove('hidden');if(fill)fill.style.width='0%';if(text)text.textContent='⏳ Préparation de l’historique canonique...';if(diagPanel)diagPanel.textContent='';
+        // PHASE 6 — MODE DIAGNOSTIC : rendu lisible du diagState de BacktestCore
+        // (§4 du cahier des charges), plus un CHECKPOINT persistant écrit dans
+        // IndexedDB à intervalles ESPACÉS (throttle 4s, jamais à chaque match —
+        // interdiction explicite §14) pour qu'un crash réel laisse une trace
+        // consultable après rechargement de l'app (via
+        // DB.getPreference('backtestDiagnosticCheckpoint')), même si la promesse
+        // run() ne s'est jamais résolue. Le checkpoint est nettoyé en cas de
+        // succès (finally ci-dessous) pour ne jamais laisser une trace périmée.
+        let lastCheckpointWrite=0;
+        // PHASE 7 — LOTS : journal court des frontières de lot franchies
+        // ("✓ LOT X TERMINÉ", §7-8 du prompt), purement affichage — plafonné à
+        // 50 entrées (largement suffisant : 100 000 matchs / 5000 = 20 lots max
+        // dans les tests demandés) pour ne jamais devenir lui-même un problème
+        // mémoire sur un très gros volume.
+        let lotLog=[];
+        const pushLotLog=line=>{lotLog.push(line);if(lotLog.length>50)lotLog.shift();};
+        const renderDiag=d=>{
+            if(!diagPanel)return;
+            const mm=Math.floor((d.elapsedMs||0)/60000),ss=Math.floor(((d.elapsedMs||0)%60000)/1000);
+            const lines=[
+                `Statut : ${Utils.escapeHTML(d.status||'?')} — Étape : ${Utils.escapeHTML(d.phase||'?')}`,
+                `Championnat : ${Utils.escapeHTML(d.leagueName||'—')} (${d.leagueIndex||0}/${d.leagueTotal||0})`,
+                `Matchs traités : ${(d.matchesDone||0).toLocaleString('fr-FR')} — Dernier : ${Utils.escapeHTML(d.lastMatchIdentity||'—')} (${Utils.escapeHTML(d.lastDateKey||'—')})`
+            ];
+            // PHASE 7 — ligne additive, n'apparaît que si BacktestCore a
+            // effectivement calculé des lots (totalLots>0).
+            if(d.totalLots){
+                lines.push(`Lot : ${d.currentLot}/${d.totalLots} — ${(d.matchesInLot||0).toLocaleString('fr-FR')}/${(d.batchSize||0).toLocaleString('fr-FR')} dans le lot en cours (lots terminés : ${d.lotsCompleted||0}/${d.totalLots})`);
+            }
+            lines.push(
+                `Vitesse : ${(d.matchesPerMinute||0).toLocaleString('fr-FR')} matchs/min — Temps écoulé : ${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`,
+                `Dernière erreur : ${d.lastError?Utils.escapeHTML(`${d.lastError.message} (match ${d.lastError.matchIdentity}, ${d.lastError.phase})`):'aucune'}`
+            );
+            if(lotLog.length)lines.push('', ...lotLog.map(l=>Utils.escapeHTML(l)));
+            diagPanel.innerHTML=lines.join('<br>');
+        };
+        const onDiagnostic=d=>{
+            renderDiag(d);
+            const now=Date.now();
+            if(now-lastCheckpointWrite>=4000){
+                lastCheckpointWrite=now;
+                DB.savePreference('backtestDiagnosticCheckpoint',{...d,savedAt:new Date().toISOString()}).catch(()=>{});
+            }
+        };
+        // PHASE 7 — LOTS : callback discret dédié aux frontières de lot
+        // (début/fin de lot logique, fin de backtest), distinct du flux continu
+        // onDiagnostic ci-dessus. Alimente le journal visuel §7-8 ET force un
+        // checkpoint IMMÉDIAT (hors throttle 4s) à chaque lot terminé — §15 du
+        // prompt : "au minimum à la fin de chaque lot", jamais par match (un
+        // lot = 5000 matchs, donc au plus 20 écritures IndexedDB pour 100 000
+        // matchs, jamais une par match).
+        const onBatch=b=>{
+            if(b.type==='LOT_TERMINE'){
+                pushLotLog(`✓ LOT ${b.lot} TERMINÉ — ${(b.matchesInLot||0).toLocaleString('fr-FR')} matchs traités (${(b.matchesProcessed||0).toLocaleString('fr-FR')}/${(b.totalMatches||0).toLocaleString('fr-FR')})`);
+            }else if(b.type==='LOT_DEBUT'){
+                pushLotLog(`LOT ${b.lot}/${b.totalLots} — début`);
+            }else if(b.type==='BACKTEST_TERMINE'){
+                pushLotLog(`✓ BACKTEST TERMINÉ — ${(b.matchesProcessed||0).toLocaleString('fr-FR')}/${(b.totalMatches||0).toLocaleString('fr-FR')} matchs, ${b.lotsCompleted||0}/${b.totalLots||0} lot(s) terminé(s)`);
+            }
+            const snapshot=(typeof globalThis!=='undefined'&&globalThis.__RedProBacktestDiagnostic)||{};
+            renderDiag(snapshot);
+            lastCheckpointWrite=Date.now();
+            DB.savePreference('backtestDiagnosticCheckpoint',{...snapshot,batchEvent:b,savedAt:new Date().toISOString()}).catch(()=>{});
+        };
         try{
             const signature=this._computeBacktestSignature(manualOverrides);
             let report=null,fromCache=false,computeMs=null;
@@ -17657,11 +17959,15 @@ La priorité est la qualité des sélections, pas la quantité.`;
                     }
                 } catch (preOptError) { console.warn('Pré-optimisation des poids impossible (repli sur poids causaux internes pour ce calcul) :', preOptError); }
                 const t0=(typeof performance!=='undefined'&&typeof performance.now==='function')?performance.now():Date.now();
-                report=await BacktestCore.run(this.matches,{manualOverrides:manualOverrides||undefined,onProgress:progress=>{const pct=progress.total?Math.round(progress.completed/progress.total*100):100;if(fill)fill.style.width=`${pct}%`;if(text)text.textContent=`⏳ Championnats : ${progress.completed}/${progress.total}`;}});
+                console.log('[BT] RUN_START');
+                report=await BacktestCore.run(this.matches,{manualOverrides:manualOverrides||undefined,onDiagnostic,onBatch,onProgress:progress=>{const pct=progress.total?Math.round(progress.completed/progress.total*100):100;if(fill)fill.style.width=`${pct}%`;if(text)text.textContent=`⏳ Championnats : ${progress.completed}/${progress.total}`;}});
+                console.log('[BT] REPORT_RECEIVED');
                 const t1=(typeof performance!=='undefined'&&typeof performance.now==='function')?performance.now():Date.now();
                 computeMs=t1-t0;
+                console.log('[BT] REPORT_SAVE_START');
                 try{await DB.savePreference('backtestCache:'+signature,{report,signature,savedAt:new Date().toISOString(),computeMs});}
                 catch(cacheWriteError){console.warn('Sauvegarde du cache de backtest impossible (le backtest reste valide en mémoire) :',cacheWriteError);}
+                console.log('[BT] REPORT_SAVE_FINISHED');
             }
             this._lastBacktestReport=report;
             // Phase 2C §19/§20 : après un backtest AUTOMATIQUE (jamais un run manuel,
@@ -17721,7 +18027,12 @@ La priorité est la qualité des sélections, pas la quantité.`;
             BacktestCenterUI.mount(report, familyCalibrationReport, selfTests, doubleCounting, leakage, this._lastBacktestCacheMeta, { preserveTab });
             if(fill)fill.style.width='100%';
             const cacheMeta=this._lastBacktestCacheMeta||{};
-            showToast(cacheMeta.fromCache?`✅ Backtest : résultat en cache réutilisé (aucun recalcul) — ${p.testedMatches} matchs testés`:`✅ Backtest terminé (${Math.round(cacheMeta.computeMs||0)} ms) : ${p.testedMatches} matchs testés`,'success');
+            // PHASE 7 — résumé lots (§9 : afficher les résultats GLOBAUX issus de
+            // tous les lots, jamais ceux du dernier lot seul — déjà garanti ici
+            // car `report` est le résultat d'un seul run() continu sur tous les
+            // championnats/matchs ; ce suffixe n'ajoute qu'un rappel du compte).
+            const batchSuffix=(!cacheMeta.fromCache&&report.batchSummary&&report.batchSummary.totalLots>0)?` — ${report.batchSummary.lotsCompleted}/${report.batchSummary.totalLots} lot(s) de ${report.batchSummary.batchSize.toLocaleString('fr-FR')} (${report.batchSummary.matchesProcessed.toLocaleString('fr-FR')}/${report.batchSummary.totalMatches.toLocaleString('fr-FR')} matchs)`:'';
+            showToast(cacheMeta.fromCache?`✅ Backtest : résultat en cache réutilisé (aucun recalcul) — ${p.testedMatches} matchs testés`:`✅ Backtest terminé (${Math.round(cacheMeta.computeMs||0)} ms) : ${p.testedMatches} matchs testés${batchSuffix}`,'success');
             // CALIBRATION AUTOMATIQUE — l'optimisation des poids (WeightOptimizationEngineP2)
             // et la construction de MarketCalibrationRegistry (via buildFromBacktestReport,
             // segment VALIDATION uniquement, anti-fuite) s'enchaînent désormais
@@ -17731,7 +18042,27 @@ La priorité est la qualité des sélections, pas la quantité.`;
             // simplement parce que cette étape aurait été oubliée. runPrompt2Optimization()
             // gère ses propres erreurs (toast) et ne relance jamais d'exception ici.
             if (!manualOverrides) await this.runPrompt2Optimization();
-        }catch(error){console.error('Erreur backtest isolé:',error);content.innerHTML=`<div class="trap-alert">❌ Backtest impossible : ${Utils.escapeHTML(error?.code||error?.message||'Erreur inconnue')}</div>`;showToast(`❌ Backtest : ${error?.code||error?.message||'Erreur inconnue'}`,'error');}
+            // Succès : le checkpoint diagnostic n'a plus d'utilité, on l'efface pour
+            // ne jamais laisser une trace périmée être lue après un futur crash.
+            try{await DB.savePreference('backtestDiagnosticCheckpoint',null);}catch(e){}
+        }catch(error){
+            // PHASE 6 — le diagState de BacktestCore reste accessible même si run()
+            // n'est jamais arrivé au `return` normal (c'est tout l'intérêt du
+            // globalThis.__RedProBacktestDiagnostic ci-dessus) : on l'inclut dans le
+            // message d'erreur pour savoir exactement où le calcul en était.
+            const lastDiag=(typeof globalThis!=='undefined'&&globalThis.__RedProBacktestDiagnostic)||null;
+            // PHASE 7 §14 — "❌ BACKTEST ARRÊTÉ" doit indiquer le lot et le
+            // match exacts où le calcul s'est arrêté : diagState (donc
+            // __RedProBacktestDiagnostic) porte déjà ces champs en temps réel
+            // (advanceLot() les met à jour AVANT tout risque de crash sur le
+            // match suivant), donc ils sont fiables même si run() n'est jamais
+            // revenu à son `return` normal.
+            const lotSuffix=(lastDiag&&lastDiag.totalLots)?` — Lot ${lastDiag.currentLot}/${lastDiag.totalLots} (${(lastDiag.lotMatchesProcessed||0).toLocaleString('fr-FR')}/${(lastDiag.matchesTotal||0).toLocaleString('fr-FR')} matchs, ${lastDiag.lotsCompleted||0} lot(s) terminé(s))`:'';
+            const diagSuffix=lastDiag?` — dernière étape connue : ${lastDiag.phase} / ${lastDiag.leagueName||'?'} / ${lastDiag.matchesDone||0} matchs traités${lotSuffix}`:'';
+            console.error('Erreur backtest isolé:',error,lastDiag);
+            content.innerHTML=`<div class="trap-alert">❌ Backtest impossible : ${Utils.escapeHTML(error?.code||error?.message||'Erreur inconnue')}${Utils.escapeHTML(diagSuffix)}</div>`;
+            showToast(`❌ Backtest : ${error?.code||error?.message||'Erreur inconnue'}${diagSuffix}`,'error');
+        }
         finally{container?.classList.add('hidden');}
     },
 
