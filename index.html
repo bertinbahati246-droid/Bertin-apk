@@ -2506,6 +2506,20 @@ const Utils = {
             ? { league: 'Premier League', country: 'England', sourceLeagueCode: 'E0' }
             : null;
     },
+    // increment67 — renomme systématiquement une ligue importée en "Ligue (Pays)" (ex. "Premier
+    // League (England)", "Premier League (Russia)") pour qu'aucun championnat homonyme de deux pays
+    // différents ne puisse plus jamais entrer en collision d'identité (cause racine du increment66).
+    // S'applique à TOUTES les ligues importées, y compris la Premier League anglaise. N'ajoute rien
+    // si le pays est inconnu (comportement inchangé dans ce cas) ou déjà présent dans le nom.
+    formatLeagueWithCountry(league, country) {
+        if (typeof league !== 'string') return league;
+        const trimmedLeague = league.trim();
+        const trimmedCountry = typeof country === 'string' ? country.trim() : '';
+        if (!trimmedLeague || !trimmedCountry) return trimmedLeague;
+        const escapedCountry = trimmedCountry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`\\(\\s*${escapedCountry}\\s*\\)$`, 'i').test(trimmedLeague)) return trimmedLeague;
+        return `${trimmedLeague} (${trimmedCountry})`;
+    },
     cleanMarket(market) {  
         if (!market) return '1';  
         const m = market.toLowerCase().trim();  
@@ -3085,11 +3099,14 @@ const FootballDataImport = {
             // lus directement (mapping V28 §1.2 : League→league, Country→country).
             const rawLeagueDirect = isFormatB ? valueAt(row, 'League').trim() : '';
             const rawCountryDirect = isFormatB ? valueAt(row, 'Country').trim() : '';
-            const league = alias ? alias.league : (normalizedOptions.fixedLeague || rawLeagueDirect || sourceLeagueCode);
+            const rawLeague = alias ? alias.league : (normalizedOptions.fixedLeague || rawLeagueDirect || sourceLeagueCode);
             const country = alias ? alias.country : (normalizedOptions.fixedCountry || rawCountryDirect || null);
             if (alias && normalizedOptions.fixedLeague && Utils.normalizeLeagueIdentity(normalizedOptions.fixedLeague) !== Utils.normalizeLeagueIdentity(alias.league)) optionErrors.add('conflicting_fixed_league');
             if (alias && normalizedOptions.fixedCountry && normalizedOptions.fixedCountry !== alias.country) optionErrors.add('conflicting_fixed_country');
-            if (!league) { reject('missing_league'); return; }
+            if (!rawLeague) { reject('missing_league'); return; }
+            // increment67 — nom de ligue persisté = "Ligue (Pays)" dès que le pays est connu,
+            // pour toutes les ligues (y compris la Premier League anglaise, alias E0).
+            const league = Utils.formatLeagueWithCountry(rawLeague, country);
             const rawFTR = valueAt(row, 'FTR').trim(), expectedFTR = FTHG > FTAG ? 'H' : FTHG < FTAG ? 'A' : 'D';
             if (rawFTR && !['H', 'D', 'A'].includes(rawFTR)) { reject('invalid_ftr'); return; }
             if (rawFTR && rawFTR !== expectedFTR) { reject('ftr_score_mismatch', { expected: expectedFTR, actual: rawFTR }); return; }
@@ -3528,7 +3545,9 @@ const DB = {
                 || (opening1X2 !== null && (match.PSH !== opening1X2.home || match.PSD !== opening1X2.draw || match.PSA !== opening1X2.away))
                 || (openingOU === null && [match['P>2.5'], match['P<2.5']].some(value => value !== null && value !== undefined))
                 || (openingOU !== null && (match['P>2.5'] !== openingOU.over || match['P<2.5'] !== openingOU.under))) invalid({ field: 'legacy_odds' });
-            if (match.sourceLeagueCode === 'E0' && (Utils.normalizeLeagueIdentity(match.league) !== 'premier league' || match.country !== 'England')) invalid({ field: 'league_alias' });
+            // increment67 — un match E0 est désormais persisté avec le libellé suffixé "Premier
+            // League (England)" (voir Utils.formatLeagueWithCountry), plus le nom brut "Premier League".
+            if (match.sourceLeagueCode === 'E0' && (match.league !== Utils.formatLeagueWithCountry('Premier League', 'England') || match.country !== 'England')) invalid({ field: 'league_alias' });
             const identity = FootballDataImport._identity(match.league, match.homeTeam, match.awayTeam, date);
             if (match.matchIdentity !== identity) fail('invalid_match_identity', { index });
             const clone = match;
@@ -26284,7 +26303,7 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
         const c=document.getElementById('importPreviewContainer'), p=state.prepared; c.replaceChildren();
         const h=document.createElement('h4'); h.textContent='Prévisualisation sécurisée de l’import'; c.appendChild(h);
         for(const [label,value] of [['Fichier',state.fileName],['Type',state.inputType.toUpperCase()],['Lignes totales',p.rowsTotal],['Matchs valides',p.validRows],['Lignes rejetées',p.rejectedRows.length],['Doublons internes',p.duplicateCandidates.length],['Ligue persistée',Array.isArray(p.persistedLeague)?p.persistedLeague.join(', '):p.persistedLeague],['Pays',Array.isArray(p.persistedCountry)?p.persistedCountry.join(', '):p.persistedCountry],['Saison(s)',p.persistedSeasons.join(', ')],['Colonnes ignorées',p.ignoredColumns.length],['Empreinte informative',p.fileFingerprint]]) this._previewLine(c,label,value);
-        if(p.matches.some(m=>m.sourceLeagueCode==='E0')) this._previewLine(c,'Alias Football-Data','E0 → Premier League / England');
+        if(p.matches.some(m=>m.sourceLeagueCode==='E0')) this._previewLine(c,'Alias Football-Data','E0 → Premier League (England)');
         const fmt=b=>`${b.total}/${p.validRows} — ${Object.entries(b.bySource).map(([s,n])=>`${s}: ${n}`).join(', ')||'aucune'}`;
         this._previewLine(c,'Cotes 1X2 ouverture',fmt(p.oddsCoverage.oneXTwo.opening)); this._previewLine(c,'Cotes 1X2 clôture',fmt(p.oddsCoverage.oneXTwo.closing)); this._previewLine(c,'O/U 2,5 ouverture',fmt(p.oddsCoverage.overUnder25.opening)); this._previewLine(c,'O/U 2,5 clôture',fmt(p.oddsCoverage.overUnder25.closing));
         this._previewLine(c,'Triplets bruts 1X2 clôture',`${p.rawClosingOddsCoverage.matchesWithAtLeastOneFamily}/${p.validRows} matchs · ${p.rawClosingOddsCoverage.familiesTotal} familles · ${Object.entries(p.rawClosingOddsCoverage.bySource).map(([source,count])=>`${source}: ${count}`).join(', ')}`);
