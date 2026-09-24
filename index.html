@@ -27006,7 +27006,14 @@ buildImportedSportsPlanV29 = (() => {
         for (const league of plan.leagues) {
             if (Utils.normalizeLeagueIdentity(league.name) !== 'premier league') continue;
             const country = countryIdentity(league.country);
-            if (country && country !== 'england') throw reconciliationError('conflicting_league_metadata', { identity: 'premier league' });
+            // increment66 — FIX : "Premier League" n'est PAS un nom réservé à l'Angleterre
+            // (Russie, Ukraine, Inde, Kazakhstan... ont chacune leur "Premier League").
+            // On ne force l'alias E0/England que si la ligue est réellement d'origine E0
+            // (sourceLeagueCode déjà 'E0') ou si aucun pays n'a été fourni par l'import.
+            // Toute autre ligue "Premier League" avec un pays explicite et différent
+            // (ex. Russia) est laissée telle quelle : plus de faux conflit à l'import.
+            const isEnglishSource = league.sourceLeagueCode === 'E0' || country === 'england' || !country;
+            if (!isEnglishSource) continue;
             league.country = 'England';
             league.sourceLeagueCode = 'E0';
         }
