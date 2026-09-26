@@ -1753,7 +1753,42 @@
                 <button class="btn btn-sm btn-danger" onclick="App.clearAllTracking()">🗑️ Effacer</button>  
             </div>  
             <div id="trackingList" class="scroll-table" style="max-height:400px;"></div>  
+            <!-- increment69B — pagination Tracking (même principe que #resultsPageInfo,
+                 increment68) : la liste est désormais paginée par id via IndexedDB
+                 (App.renderTracking), plus jamais rendue en un bloc depuis un tableau
+                 complet en RAM. -->
+            <div class="flex gap-1 flex-wrap mt-1" style="align-items:center;justify-content:center;">
+                <button class="btn btn-sm btn-secondary" onclick="App.trackingPrevPage()">◀ Précédent</button>
+                <span class="text-sub fs-06" id="trackingPageInfo">Page 1</span>
+                <button class="btn btn-sm btn-secondary" onclick="App.trackingNextPage()">Suivant ▶</button>
+            </div>
         </div>  
+        <!-- increment68 — AJOUT ADDITIF : statistiques Suivi filtrées par période/championnat
+             + générateur de prompt partagé (App.generateTrackingPrompt / PromptGenerator).
+             increment69B — le bloc "📊 Suivi des paris" ci-dessus (renderTracking, filterTracking)
+             a été adapté pour supprimer App.trackingData (lecture par curseur IndexedDB filtrée
+             + paginée) ; ce panneau de statistiques par période/championnat reste inchangé et
+             continue de calculer en streaming (curseur IndexedDB sur 'tracking'), comme avant,
+             jamais via un tableau complet en RAM. -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">📈 Statistiques Suivi (période)</div>
+                <div class="flex gap-1 flex-wrap">
+                    <button class="btn btn-sm btn-gold" onclick="App.generateTrackingPrompt()">🧠 Générer un prompt</button>
+                </div>
+            </div>
+            <div class="flex gap-1 flex-wrap mb-2" style="align-items:center;">
+                <span class="text-sub fs-06">Du</span>
+                <input type="date" id="trackingStatsDateFrom" onchange="App.setTrackingStatsRange(this.value,null)">
+                <span class="text-sub fs-06">Au</span>
+                <input type="date" id="trackingStatsDateTo" onchange="App.setTrackingStatsRange(null,this.value)">
+                <select id="trackingStatsLeague" onchange="App.setTrackingStatsLeague(this.value)">
+                    <option value="">Tous les championnats</option>
+                </select>
+                <button class="btn btn-sm btn-secondary" onclick="App.resetTrackingStatsFilter()">Tout</button>
+            </div>
+            <div id="trackingStatsPanel" class="text-sub fs-06" style="padding:8px;">Sélectionnez une période ou générez directement sur tout l'historique.</div>
+        </div>
     </section>  
   
     <section id="page-results" class="page hidden">  
@@ -1763,9 +1798,29 @@
                 <div class="flex gap-1 flex-wrap">  
                     <button class="btn btn-sm btn-danger" onclick="App.clearResults()">🗑️ Effacer</button>  
                     <button class="btn btn-sm btn-purple" onclick="App.exportResultsCSV()">📤 CSV</button>  
+                    <button class="btn btn-sm btn-purple" onclick="App.exportResultsJSON()">📤 JSON</button>
                 </div>  
             </div>  
+            <!-- increment68 — AJOUT ADDITIF : filtre période/championnat + pagination.
+                 Le filtre s'applique avant l'affichage ET avant l'export (App.exportResultsCSV/JSON
+                 relisent désormais l'historique par curseur IndexedDB filtré plutôt que le tableau
+                 complet this.results, pour rester exploitables sur un historique de plusieurs années). -->
+            <div class="flex gap-1 flex-wrap mb-2" style="align-items:center;">
+                <span class="text-sub fs-06">Du</span>
+                <input type="date" id="resultsDateFrom" onchange="App.setResultsRange(this.value,null)">
+                <span class="text-sub fs-06">Au</span>
+                <input type="date" id="resultsDateTo" onchange="App.setResultsRange(null,this.value)">
+                <select id="resultsLeagueFilter" onchange="App.setResultsLeague(this.value)">
+                    <option value="">Tous les championnats</option>
+                </select>
+                <button class="btn btn-sm btn-secondary" onclick="App.resetResultsFilter()">Tout</button>
+            </div>
             <div id="resultsList" class="scroll-table" style="max-height:500px;"></div>  
+            <div class="flex gap-1 flex-wrap mt-1" style="align-items:center;justify-content:center;">
+                <button class="btn btn-sm btn-secondary" onclick="App.resultsPrevPage()">◀ Précédent</button>
+                <span class="text-sub fs-06" id="resultsPageInfo">Page 1</span>
+                <button class="btn btn-sm btn-secondary" onclick="App.resultsNextPage()">Suivant ▶</button>
+            </div>
         </div>  
     </section>  
   
@@ -4562,6 +4617,22 @@ const DB = {
     },
     async saveTracking(entry) { await this.open(); return new Promise(res => { const tx = this._db.transaction('tracking', 'readwrite'); const store = tx.objectStore('tracking'); const { id, ...clean } = entry; if (!clean.result) clean.result = 'pending'; if (!clean.profit) clean.profit = 0; if (!clean.type) clean.type = 'single'; if (!clean.status) clean.status = 'active'; const req = store.add(clean); req.onsuccess = () => res(req.result); }); },  
     async getAllTracking() { await this.open(); return new Promise(res => { const req = this._db.transaction('tracking').objectStore('tracking').getAll(); req.onsuccess = () => res(req.result || []); }); },  
+    // increment69B — AJOUT ADDITIF (Tracking/Suivi, suppression du chargement complet de
+    // App.trackingData en RAM) : lecture ciblée d'UNE entrée par id, sans jamais passer par
+    // un tableau complet. Utilisée partout où le code n'a besoin que d'un pari/coupon précis
+    // (ouverture d'un modal, règlement, vérification d'existence) — jamais pour lister.
+    async getTracking(id) { await this.open(); return new Promise((res, rej) => { const req = this._db.transaction('tracking').objectStore('tracking').get(id); req.onsuccess = () => res(req.result || null); req.onerror = () => rej(req.error); }); },
+    // increment69B — AJOUT ADDITIF : count() natif IndexedDB (voir DB.countResults,
+    // increment69), sans jamais matérialiser les lignes.
+    async countTracking() { await this.open(); return new Promise((res, rej) => { const req = this._db.transaction('tracking').objectStore('tracking').count(); req.onsuccess = () => res(req.result || 0); req.onerror = () => rej(req.error); }); },
+    // increment69B — AJOUT ADDITIF (même mécanique que DB.getResultsByIds, increment69) :
+    // relit uniquement les entrées dont l'id est fourni (ex. la page courante affichée dans
+    // Suivi), jamais l'historique complet. Lecture seule, un seul store.get() par id demandé.
+    async getTrackingByIds(ids) { await this.open(); return new Promise((res, rej) => { if (!ids || ids.length === 0) { res([]); return; } const tx = this._db.transaction('tracking'); const store = tx.objectStore('tracking'); const rows = []; let pending = ids.length; tx.onerror = () => rej(tx.error); for (const id of ids) { const req = store.get(id); req.onsuccess = () => { if (req.result) rows.push(req.result); if (--pending === 0) res(rows); }; req.onerror = () => { if (--pending === 0) res(rows); }; } }); },
+    // increment69B — AJOUT ADDITIF : les N dernières entrées par ordre d'insertion (curseur
+    // 'prev' sur la clé primaire autoIncrement), pour un aperçu borné (ex. "5 derniers paris"
+    // du tableau de bord) sans jamais lire tout le store. Mémoire bornée par `limit`.
+    async getLastTrackingEntries(limit) { await this.open(); return new Promise((res, rej) => { const rows = []; const req = this._db.transaction('tracking').objectStore('tracking').openCursor(null, 'prev'); req.onerror = () => rej(req.error); req.onsuccess = event => { const cursor = event.target.result; if (!cursor || rows.length >= limit) { res(rows); return; } rows.push(cursor.value); cursor.continue(); }; }); },
     async updateTracking(id, updates) { await this.open(); return new Promise(res => { const tx = this._db.transaction('tracking', 'readwrite'); const store = tx.objectStore('tracking'); const req = store.get(id); req.onsuccess = () => { const entry = req.result; if (entry) { Object.assign(entry, updates); store.put(entry); } }; tx.oncomplete = () => res(); }); },  
     async deleteTracking(id) { await this.open(); return new Promise(res => { const tx = this._db.transaction('tracking', 'readwrite'); tx.objectStore('tracking').delete(id); tx.oncomplete = () => res(); }); },  
     async clearAllTracking() { await this.open(); return new Promise(res => { const tx = this._db.transaction('tracking', 'readwrite'); tx.objectStore('tracking').clear(); tx.oncomplete = () => res(); }); },  
@@ -4579,6 +4650,45 @@ const DB = {
     async saveResult(result) { await this.open(); return new Promise(res => { const tx = this._db.transaction('results', 'readwrite'); const store = tx.objectStore('results'); const { id, ...clean } = result; const req = store.add(clean); req.onsuccess = () => res(req.result); }); },  
     async getAllResults() { await this.open(); return new Promise(res => { const req = this._db.transaction('results').objectStore('results').getAll(); req.onsuccess = () => res(req.result || []); }); },  
     async clearResults() { await this.open(); return new Promise(res => { const tx = this._db.transaction('results', 'readwrite'); tx.objectStore('results').clear(); tx.oncomplete = () => res(); }); },  
+    // increment69 — AJOUT ADDITIF (suppression du chargement complet de l'historique
+    // results en RAM, §RESULTS) : count() natif IndexedDB, sans jamais matérialiser
+    // les lignes — utilisé pour le badge d'en-tête à la place de this.results.length.
+    async countResults() { await this.open(); return new Promise((res, rej) => { const req = this._db.transaction('results').objectStore('results').count(); req.onsuccess = () => res(req.result || 0); req.onerror = () => rej(req.error); }); },  
+    // increment69 — AJOUT ADDITIF : relit uniquement les enregistrements dont l'id
+    // est fourni (ex. les ~50 lignes de la page courante de Results), jamais
+    // l'historique complet. Lecture seule, un seul store.get() par id demandé.
+    async getResultsByIds(ids) { await this.open(); return new Promise((res, rej) => { if (!ids || ids.length === 0) { res([]); return; } const tx = this._db.transaction('results'); const store = tx.objectStore('results'); const rows = []; let pending = ids.length; tx.onerror = () => rej(tx.error); for (const id of ids) { const req = store.get(id); req.onsuccess = () => { if (req.result) rows.push(req.result); if (--pending === 0) res(rows); }; req.onerror = () => { if (--pending === 0) res(rows); }; } }); },  
+    // increment68 — AJOUT ADDITIF, streaming mémoire-safe (Suivi / Résultats §8-10-14) :
+    // parcourt un object store via curseur, ligne par ligne, sans jamais matérialiser
+    // l'historique complet en RAM. `onRow(record)` est appelé pour chaque ligne qui passe
+    // le filtre optionnel `predicate(record)`. N'écrit jamais rien (lecture seule) et ne
+    // touche à aucun store/format existant : purement additif, aucune régression possible
+    // sur les fonctions déjà présentes (saveResult/getAllResults/clearResults inchangées).
+    // increment69B — AJOUT ADDITIF, rétrocompatible : `onRow` peut désormais renvoyer
+    // littéralement `true` pour arrêter le curseur immédiatement (ex. vérification
+    // d'existence, cf. App.deleteTeam). Tout `onRow` existant ne renvoyant rien
+    // (undefined) continue à parcourir le store entièrement, comme avant — aucun
+    // changement de comportement pour les appelants déjà en place (Résultats, Suivi).
+    async streamStore(storeName, { predicate, onRow } = {}) {
+        await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = this._db.transaction(storeName, 'readonly');
+            const request = tx.objectStore(storeName).openCursor();
+            let visited = 0, matched = 0, stopped = false;
+            request.onerror = () => reject(request.error || tx.error);
+            request.onsuccess = event => {
+                const cursor = event.target.result;
+                if (!cursor) { resolve({ visited, matched, stopped }); return; }
+                visited++;
+                const record = cursor.value;
+                if (!predicate || predicate(record)) {
+                    matched++;
+                    if (onRow && onRow(record) === true) { stopped = true; resolve({ visited, matched, stopped }); return; }
+                }
+                cursor.continue();
+            };
+        });
+    },
     async saveMarketResult(entry) { await this.open(); return new Promise(res => { const tx = this._db.transaction('marketResults', 'readwrite'); const store = tx.objectStore('marketResults'); const req = store.add(entry); req.onsuccess = () => res(req.result); }); },  
     async getAllMarketResults() { await this.open(); return new Promise(res => { const req = this._db.transaction('marketResults').objectStore('marketResults').getAll(); req.onsuccess = () => res(req.result || []); }); },  
     async savePreference(key, value) { await this.open(); return new Promise(res => { const tx = this._db.transaction('preferences', 'readwrite'); const store = tx.objectStore('preferences'); store.put({ key, value }); tx.oncomplete = () => res(); }); },  
@@ -4784,7 +4894,33 @@ const PredictiveCoreV30 = (() => {
     const SIGNATURE='red-pro-1x2-v30.1.0-mc20000',SEED_NAMESPACE='red-pro-1x2-v30.0.0',MODEL_NAMES=Object.freeze(['elo','poisson','dixonColes','monteCarlo','form','offDef','h2h']),DEFAULT_MONTE_CARLO_SIMS=20000;
     const clamp=(value,min,max)=>Math.min(max,Math.max(min,value)),finite=(value,fallback)=>typeof value==='number'&&Number.isFinite(value)?value:fallback,poisson=(lambda,k)=>{let factorial=1;for(let i=2;i<=k;i++)factorial*=i;return Math.exp(-lambda)*lambda**k/factorial;};
     const normalizePrediction=prediction=>{if(!prediction)return null;const values=[prediction.p1,prediction.pX,prediction.p2];if(values.some(value=>typeof value!=='number'||!Number.isFinite(value)||value<0))return null;const total=values.reduce((sum,value)=>sum+value,0);return total>0?{p1:values[0]/total,pX:values[1]/total,p2:values[2]/total}:null;};
-    function normalizeWeights(input){const weights={};let total=0;for(const model of MODEL_NAMES){const value=input?.[model],valid=typeof value==='number'&&Number.isFinite(value)&&value>0?value:0;weights[model]=valid;total+=valid;}const usedFallback=total<=0;if(usedFallback)for(const model of MODEL_NAMES)weights[model]=1/MODEL_NAMES.length;else for(const model of MODEL_NAMES)weights[model]/=total;return{weights,usedFallback};}
+    // CORRECTION DIRECTE — POIDS CAUSAUX 5 CLUSTERS (§3/§4) : le niveau top-level
+    // des poids (ConfigurationRegistry, issu de BacktestCore.causalWeights désormais
+    // figé avant TEST) est maintenant à 5 clés — goalModel/elo/form/offDef/h2h —
+    // GoalModel regroupant Poisson+Dixon-Coles+Monte Carlo (§4 : ces trois modèles
+    // ne reçoivent plus chacun un poids top-level indépendant). predict()
+    // ci-dessous continue d'évaluer chaque transformation séparément (aucun
+    // changement de modelPredictions/matrix/MODEL_NAMES — aucun risque pour les
+    // nombreux consommateurs de modelPredictions.dixonColes.matrix) : un vecteur
+    // 5 clés est donc traduit ICI, au point d'entrée unique de résolution des
+    // poids, en un vecteur 7 clés équivalent — répartition interne ÉGALE des 3
+    // sous-modèles de GoalModel (aucune pondération interne inventée : Poisson/
+    // Dixon-Coles/Monte Carlo restent, par construction de ce fichier, des
+    // transformations d'une même information partagée — cf. commentaire CLUSTERS
+    // de CausalEnsembleEngine). Un vecteur legacy à 7 clés (override manuel,
+    // WeightOptimizationEngineP2, CausalEnsembleEngine.finalWeights) n'est JAMAIS
+    // réécrit : l'expansion ne s'applique que si poisson/dixonColes/monteCarlo
+    // sont TOUS absents du vecteur fourni et qu'un goalModel numérique positif
+    // est présent.
+    function _expandGoalModelWeights(input){
+        if(!input||typeof input!=='object')return input;
+        const hasGoalModel=typeof input.goalModel==='number'&&Number.isFinite(input.goalModel)&&input.goalModel>0;
+        const hasAnySubmodel=['poisson','dixonColes','monteCarlo'].some(m=>typeof input[m]==='number'&&Number.isFinite(input[m])&&input[m]>0);
+        if(!hasGoalModel||hasAnySubmodel)return input;
+        const share=input.goalModel/3;
+        return{...input,poisson:share,dixonColes:share,monteCarlo:share};
+    }
+    function normalizeWeights(input){const expanded=_expandGoalModelWeights(input);const weights={};let total=0;for(const model of MODEL_NAMES){const value=expanded?.[model],valid=typeof value==='number'&&Number.isFinite(value)&&value>0?value:0;weights[model]=valid;total+=valid;}const usedFallback=total<=0;if(usedFallback)for(const model of MODEL_NAMES)weights[model]=1/MODEL_NAMES.length;else for(const model of MODEL_NAMES)weights[model]/=total;return{weights,usedFallback};}
     function hashSeed(value){let hash=2166136261;for(const char of String(value??'')){hash^=char.charCodeAt(0);hash=Math.imul(hash,16777619);}return hash>>>0;}
     function createRng(seed){let state=typeof seed==='number'&&Number.isFinite(seed)?seed>>>0:hashSeed(seed);return()=>{state=(state+0x6D2B79F5)>>>0;let t=state;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
     function lambdas(home,away,terrain,homeAdvantage,leagueStrength=1){const hxg=finite(home?.xG,1),hxga=finite(home?.xGA,1),axg=finite(away?.xG,1),axga=finite(away?.xGA,1),before={lA:(hxg*.6+axga*.4)*finite(leagueStrength,1),lB:(axg*.6+hxga*.4)*finite(leagueStrength,1)};let lA=before.lA,lB=before.lB;if(terrain!=='neutral'){const factor=10**(clamp(finite(homeAdvantage,40),-120,120)/1600);if(terrain==='away'){lA/=factor;lB*=factor;}else{lA*=factor;lB/=factor;}}return{before,after:{lA:clamp(lA,.3,3.5),lB:clamp(lB,.3,3.5)}};}
@@ -9283,9 +9419,25 @@ const ValueTestEngine = (() => {
     // réutilisable hors ligne sur un tableau déjà en mémoire) ; ce nouvel accumulateur est un chemin
     // alternatif, équivalent bit à bit, ajouté pour BacktestCore.runValueTest (voir
     // RedProTestValueMemorySelfTests pour la preuve d'équivalence numérique).
+    // ═══════════════════ AJOUT ADDITIF — TEST VALUE : COMPTEUR « MATCHS EXAMINÉS » (championship×marketTab) ═══════════════════
+    // Compteur STRICTEMENT SÉPARÉ de addRow/finalize ci-dessous (aucune ligne existante modifiée, aucun champ
+    // existant renommé) : addExamined() incrémente matchesExamined pour (championship, marketTab) même
+    // lorsqu'AUCUNE sélection n'a été tirée pour ce marché sur ce match (ensemble admissible vide, ou tirage
+    // rendant idx<0) — c'est précisément le cas que addRow() ne voit jamais (addRow n'est appelé qu'après un
+    // tirage effectif, voir BacktestCore.runValueTest). finalizeExamined() reste un chemin de lecture séparé de
+    // finalize() : le format déjà produit par finalize() (utilisé par l'UI et par le test d'équivalence bit à
+    // bit avec probabilisticStatsByMarket) n'est donc modifié d'aucune façon.
     function createMarketStatsAccumulator() {
         const groups = new Map();
+        const examined = new Map();
         const eps = ptv3LogLossEpsilon(), clamp01 = v => Math.max(eps, Math.min(1, v));
+        function addExamined(championship, marketTab) {
+            const key = `${championship}\u0001${marketTab}`;
+            let e = examined.get(key);
+            if (!e) { e = { championship, marketTab, matchesExamined: 0 }; examined.set(key, e); }
+            e.matchesExamined++;
+        }
+        function finalizeExamined() { return [...examined.values()]; }
         function addRow(r) {
             const key = `${r.championship}\u0001${r.marketTab}`;
             let g = groups.get(key);
@@ -9334,8 +9486,9 @@ const ValueTestEngine = (() => {
                 return { championship: g.championship, marketTab: g.marketTab, selections: n, valid, invalid, noProbability: g.noProbability, nonBinaryResult: g.nonBinaryResult, meanProbability, observedFrequency, brier, logLoss, ece, mce, bins };
             });
         }
-        return { addRow, finalize };
+        return { addRow, finalize, addExamined, finalizeExamined };
     }
+    // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE : COMPTEUR « MATCHS EXAMINÉS » ═══════════════════
     // Détermine si une ligne Partie 2 est exploitable pour Capital/Détail par marché (même condition que
     // celle appliquée en interne par simulateCapital via ptv4BinaryOutcome + garde p∈]0,1[) : probabilité
     // calibrée valide ET résultat déterminable (GAGNANT/PERDANT/DEMI-GAGNANT/DEMI-PERDANT/REMBOURSÉ).
@@ -9416,6 +9569,20 @@ const ValueTestEngine = (() => {
         let totalStaked = 0, stakeCount = 0, maxStake = 0, sumExposurePerMatch = 0, maxExposurePerMatch = 0;
         let wins = 0, losses = 0, pushes = 0, halfWins = 0, halfLosses = 0;
         const curve = keepDetail ? [{ date: null, matchIdentity: null, label: 'Capital initial', capitalBefore: initialCapital, staked: 0, pnl: 0, capitalAfter: initialCapital }] : null;
+        // ═══ AJOUT ADDITIF — TEST VALUE : VENTILATION FINANCIÈRE COMPACTE championship×marketKey ═══
+        // Lecture SEULE des résultats déjà produits ci-dessous par la boucle de règlement existante
+        // (sel.outcome, actualStake, pnl) — AUCUNE nouvelle formule de Kelly/règlement, uniquement une
+        // agrégation supplémentaire par (championship, marketTab) déjà porté par chaque sélection
+        // (voir regroupement byMatch ci-dessus). Mémoire bornée : O(nombre de marchés), jamais une
+        // liste de sélections individuelles.
+        const byMarketAcc = new Map();
+        const byMarketGroup = (championship, marketKey) => {
+            const key = `${championship}\u0001${marketKey}`;
+            let g = byMarketAcc.get(key);
+            if (!g) { g = { championship, marketKey, wins: 0, losses: 0, push: 0, halfWin: 0, halfLoss: 0, pnl: 0, totalStake: 0 }; byMarketAcc.set(key, g); }
+            return g;
+        };
+        // ═══ FIN AJOUT ADDITIF (déclarations) — VENTILATION FINANCIÈRE ═══
 
         for (const m of matches) {
             const capitalBeforeMatch = capital;
@@ -9446,6 +9613,10 @@ const ValueTestEngine = (() => {
                 matchStaked += actualStake; matchPnl += pnl;
                 if (actualStake > 0) { totalStaked += actualStake; stakeCount++; if (actualStake > maxStake) maxStake = actualStake; }
                 if (sel.outcome === 'WIN') wins++; else if (sel.outcome === 'LOSS') losses++; else if (sel.outcome === 'PUSH') pushes++; else if (sel.outcome === 'HALF_WIN') halfWins++; else if (sel.outcome === 'HALF_LOSS') halfLosses++;
+                // AJOUT ADDITIF — même lecture sel.outcome/actualStake/pnl que juste au-dessus, agrégée par marché.
+                const bg = byMarketGroup(m.championship, sel.marketTab);
+                if (sel.outcome === 'WIN') bg.wins++; else if (sel.outcome === 'LOSS') bg.losses++; else if (sel.outcome === 'PUSH') bg.push++; else if (sel.outcome === 'HALF_WIN') bg.halfWin++; else if (sel.outcome === 'HALF_LOSS') bg.halfLoss++;
+                bg.pnl += pnl; bg.totalStake += actualStake;
             }
             // Plus longue série de pertes : sur les PERTES COMPLÈTES uniquement (Push/Half
             // Loss ne l'allongent ni ne la réinitialisent ; seuls WIN/HALF_WIN la remettent
@@ -9465,6 +9636,10 @@ const ValueTestEngine = (() => {
             if (keepDetail) curve.push({ date: m.date, matchIdentity: m.matchIdentity, label: `${m.home} – ${m.away}`, capitalBefore: capitalBeforeMatch, staked: matchStaked, pnl: matchPnl, capitalAfter: capital });
         }
         const matchCount = matches.length, selectionCount = matches.reduce((s, m) => s + m.selections.length, 0);
+        // AJOUT ADDITIF — finalisation compacte de la ventilation championship×marketKey (ROI = P/L rapporté
+        // à la mise totale déjà réglée pour ce marché — même convention que returnPct ci-dessus, aucune
+        // formule concurrente). O(nombre de marchés), jamais une copie des sélections.
+        const byMarket = [...byMarketAcc.values()].map(g => ({ ...g, roi: g.totalStake > 0 ? g.pnl / g.totalStake : null }));
         return {
             ok: true, reason: null, initialCapital, curve: keepDetail ? curve : null, matches: keepDetail ? matches : null,
             stats: {
@@ -9473,7 +9648,8 @@ const ValueTestEngine = (() => {
                 matchCount, selectionCount, totalStaked, averageStake: stakeCount ? totalStaked / stakeCount : null, maxStake,
                 averageExposurePerMatch: matchCount ? sumExposurePerMatch / matchCount : null, maxExposurePerMatch,
                 maxDrawdownAbs, maxDrawdownPct, longestLossStreak, wins, losses, pushes, halfWins, halfLosses
-            }
+            },
+            byMarket
         };
     }
     // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE PARTIE 4 ═══════════════════
@@ -9514,12 +9690,62 @@ const ValueTestEngine = (() => {
         });
     }
     // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE PARTIE 5 ═══════════════════
+    // ═══════════════════ AJOUT ADDITIF — TEST VALUE : UNIT STATS (championship×marketKey) ═══════════════════
+    // Fonction PURE : fusionne les statistiques probabilistes déjà produites (createMarketStatsAccumulator.
+    // finalize(), enrichi de matchesExamined/selectionsDrawn par l'appelant — voir BacktestCore.runValueTest)
+    // et la ventilation financière déjà produite par simulateCapital().byMarket, en lignes compactes une par
+    // (championship, marketKey). AUCUN recalcul de Brier/LogLoss/ECE/Kelly/settlement/ROI : uniquement une
+    // lecture + réindexation des deux structures déjà calculées. Ne conserve aucune sélection individuelle.
+    function buildUnitStatsRows(marketStats, financialByMarket) {
+        const finByKey = new Map();
+        for (const f of (Array.isArray(financialByMarket) ? financialByMarket : [])) {
+            finByKey.set(`${f.championship}\u0001${f.marketKey}`, f);
+        }
+        const rows = [], seen = new Set();
+        for (const m of (Array.isArray(marketStats) ? marketStats : [])) {
+            const key = `${m.championship}\u0001${m.marketTab}`;
+            seen.add(key);
+            const fin = finByKey.get(key) || null;
+            rows.push({
+                championship: m.championship, marketKey: m.marketTab,
+                matchesExamined: Number.isFinite(m.matchesExamined) ? m.matchesExamined : 0,
+                selectionsDrawn: Number.isFinite(m.selectionsDrawn) ? m.selectionsDrawn : (Number.isFinite(m.selections) ? m.selections : 0),
+                valid: Number.isFinite(m.valid) ? m.valid : 0, invalid: Number.isFinite(m.invalid) ? m.invalid : 0,
+                avgProbability: Number.isFinite(m.meanProbability) ? m.meanProbability : null,
+                observedFrequency: Number.isFinite(m.observedFrequency) ? m.observedFrequency : null,
+                brier: Number.isFinite(m.brier) ? m.brier : null, logLoss: Number.isFinite(m.logLoss) ? m.logLoss : null,
+                ece: Number.isFinite(m.ece) ? m.ece : null,
+                wins: fin && Number.isFinite(fin.wins) ? fin.wins : 0, losses: fin && Number.isFinite(fin.losses) ? fin.losses : 0,
+                push: fin && Number.isFinite(fin.push) ? fin.push : 0,
+                halfWin: fin && Number.isFinite(fin.halfWin) ? fin.halfWin : 0, halfLoss: fin && Number.isFinite(fin.halfLoss) ? fin.halfLoss : 0,
+                pnl: fin && Number.isFinite(fin.pnl) ? fin.pnl : 0, totalStake: fin && Number.isFinite(fin.totalStake) ? fin.totalStake : 0,
+                roi: fin && Number.isFinite(fin.roi) ? fin.roi : null
+            });
+        }
+        // Marché financièrement réglé mais absent de marketStats (ne devrait normalement pas se produire, les
+        // deux structures étant construites à partir des mêmes lignes — conservé par robustesse, aucune donnée tue).
+        for (const f of (Array.isArray(financialByMarket) ? financialByMarket : [])) {
+            const key = `${f.championship}\u0001${f.marketKey}`;
+            if (seen.has(key)) continue;
+            rows.push({
+                championship: f.championship, marketKey: f.marketKey,
+                matchesExamined: 0, selectionsDrawn: 0, valid: 0, invalid: 0,
+                avgProbability: null, observedFrequency: null, brier: null, logLoss: null, ece: null,
+                wins: Number.isFinite(f.wins) ? f.wins : 0, losses: Number.isFinite(f.losses) ? f.losses : 0,
+                push: Number.isFinite(f.push) ? f.push : 0, halfWin: Number.isFinite(f.halfWin) ? f.halfWin : 0, halfLoss: Number.isFinite(f.halfLoss) ? f.halfLoss : 0,
+                pnl: Number.isFinite(f.pnl) ? f.pnl : 0, totalStake: Number.isFinite(f.totalStake) ? f.totalStake : 0,
+                roi: Number.isFinite(f.roi) ? f.roi : null
+            });
+        }
+        return rows;
+    }
+    // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE : UNIT STATS ═══════════════════
     return Object.freeze({
         MARGE_STRESS_ODDS, SNAPSHOT_VERSION, SNAPSHOT_PREFIX, SNAPSHOT_INDEX_KEY, EDGE_BUCKETS, ODDS_BINDINGS,
         resolveOpeningOdds, stressOddsOf, edgeStressOf, fairOddsOf, bucketIndexOf,
         createStore, ensureLeague, observeSelection, observeMatch, observeAhItems, buildSnapshot, buildReportSection, derive,
         probabilisticStatsByMarket, simulateCapital, THRESHOLD_EDGES, thresholdAnalysis,
-        createMarketStatsAccumulator, isCapitalEligibleRow
+        createMarketStatsAccumulator, isCapitalEligibleRow, buildUnitStatsRows
     });
 })();
 if (typeof globalThis !== 'undefined') globalThis.ValueTestEngine = ValueTestEngine;
@@ -9812,7 +10038,11 @@ const ManualChampionshipSelfTests = (() => {
         });
         t(2, 'aucun bouton/fonction globale « calculer tous »', () => {
             if (!A) return false;
-            const bad = Object.keys(A).filter(k => /^(run|start|launch|calc|recalc)/i.test(k) && /(all|tous|global)/i.test(k));
+            // Liste blanche fermée : orchestrateurs explicitement volontaires, non « calculer tous » implicites.
+            // App.runValueTestAllChampionships est l'orchestrateur TEST VALUE (increment75), volontaire et déjà testé
+            // par ses propres tests ciblés — ce n'est pas un moteur global « calculer tous » interdit.
+            const ALLOWED_ORCHESTRATORS = new Set(['runValueTestAllChampionships']);
+            const bad = Object.keys(A).filter(k => !ALLOWED_ORCHESTRATORS.has(k) && /^(run|start|launch|calc|recalc)/i.test(k) && /(all|tous|global)/i.test(k));
             return { ok: !A.runBackgroundRecalibration && !A.runValueTestCalculation && bad.length === 0, detail: bad.join(',') || null };
         });
         t(3, 'rendus CALCULS / VALUE TEST et sélection de sous-onglet sans trigger', () => {
@@ -9970,7 +10200,24 @@ const BacktestCore = (() => {
     const avg=values=>values.length?values.reduce((sum,value)=>sum+value,0)/values.length:null;
     const identity=value=>String(value??'').normalize('NFKC').trim().toLocaleLowerCase('en-US').replace(/[\u2018\u2019\u02BC]/g,"'").replace(/[\u2010-\u2015\u2212]/g,'-').replace(/\s+/g,' ').replace(/\s*([-'])\s*/g,'$1');
     const leagueIdentity=value=>{const id=identity(value);return id==='e0'?'premier league':id;};
-    const leagueLabel=value=>value==='premier league'?'Premier League':value.split(' ').filter(Boolean).map(word=>word.charAt(0).toLocaleUpperCase('fr-FR')+word.slice(1)).join(' ');
+    // CORRECTIF (cohérence identité championnat CALCULS/Analyse, §OBJECTIF 2) :
+    // l'ancienne version capitalisait uniquement value.charAt(0) de chaque
+    // "mot" séparé par un espace — pour un mot commençant par une parenthèse
+    // (ex. "(china)" issu d'un nom canonique "Super League (China)", voir
+    // Utils.formatLeagueWithCountry / increment67), charAt(0) est "(" et la
+    // vraie première lettre ("c") n'était donc JAMAIS remise en majuscule :
+    // leagueLabel('super league (china)') => 'Super League (china)', un nom
+    // qui ne correspond plus jamais, au caractère près, au nom canonique
+    // "Super League (China)" utilisé par Analyse/ConfigurationRegistry côté
+    // UI — d'où un CalibrationSnapshot bien VALID côté CALCULS mais introuvable
+    // côté Analyse (repli sur le fallback codé en dur). Le correctif capitalise
+    // la première lettre RÉELLE de chaque mot (après toute ponctuation de tête
+    // telle que '('), sans changer le comportement pour un mot qui commence
+    // déjà par une lettre (strictement identique à l'ancien calcul dans ce cas).
+    const leagueLabel=value=>value==='premier league'?'Premier League':value.split(' ').filter(Boolean).map(word=>{
+        const m=word.match(/^(\W*)(\w)([\s\S]*)$/);
+        return m?(m[1]+m[2].toLocaleUpperCase('fr-FR')+m[3]):word;
+    }).join(' ');
     const validProbability=value=>Number.isFinite(value)&&!Object.is(value,-0)&&value>=0&&value<=1;
     const validOdd=value=>typeof value==='number'&&Number.isFinite(value)&&!Object.is(value,-0)&&value>1.05;
 
@@ -10106,7 +10353,7 @@ const BacktestCore = (() => {
                 contributions[model] = { status: nTest === 0 ? 'MISSING' : 'INVALID', nTest, brierScore: ModelContributionEngine.INVALID, logLossScore: ModelContributionEngine.INVALID, eceScore: ModelContributionEngine.INVALID, stabilityScore: ModelContributionEngine.INVALID, robustnessScore: ModelContributionEngine.INVALID, contributionScore: 0 };
                 continue;
             }
-            const brierModel = ca.brierSum / ca.count;
+            const brierModel = ca.brier / ca.count;
             const logLossModel = (typeof ca.logLossSum === 'number') ? ca.logLossSum / ca.count : null;
             const eceModel = ca.eceBins ? _eceFromBinsBT(ca.eceBins) : null;
             const brierScore = ModelContributionEngine.scoreVsBaseline(brierModel, baselineBrier);
@@ -10130,6 +10377,26 @@ const BacktestCore = (() => {
         return { rawScore, contributions };
     }
 
+    // CORRECTION DIRECTE — POIDS CAUSAUX 5 CLUSTERS (§3/§4/§6) : rawScore reste
+    // calculé par modèle brut (7 clés, _computeContributionsBT ci-dessus, INCHANGÉ —
+    // performance/updatePerformance continuent d'accumuler causalement par modèle
+    // brut, aucune nouvelle passe sur le dataset). Ce collapseur agrège UNIQUEMENT
+    // le résultat final en 5 contributions top-level (GoalModel = moyenne des scores
+    // Poisson/Dixon-Coles/Monte Carlo, comme les autres clusters à un seul membre) —
+    // MÊME règle que CLUSTERS/clusterRawScore de CausalEnsembleEngine (§6 : "ne crée
+    // pas une nouvelle logique arbitraire de score", donc réutilisation directe de
+    // la même définition de clusters et de la même formule moyenne-des-membres).
+    const WEIGHT_CLUSTERS_BT = (typeof CausalEnsembleEngine !== 'undefined' && CausalEnsembleEngine.CLUSTERS)
+        ? CausalEnsembleEngine.CLUSTERS
+        : Object.freeze({ goalModel: Object.freeze(['poisson', 'dixonColes', 'monteCarlo']), elo: Object.freeze(['elo']), form: Object.freeze(['form']), offDef: Object.freeze(['offDef']), h2h: Object.freeze(['h2h']) });
+    function _collapseToClusterScoreBT(rawScore) {
+        const clusterScore = {};
+        for (const [cluster, members] of Object.entries(WEIGHT_CLUSTERS_BT)) {
+            const scores = members.map(m => rawScore[m]).filter(s => typeof s === 'number' && s > 0);
+            clusterScore[cluster] = scores.length ? scores.reduce((a, b) => a + b, 0) / members.length : 0;
+        }
+        return clusterScore;
+    }
     function causalWeights(performance, leagueName, manualWeights, baselinePerf) {
         // RÉVISÉ (Phase 2C, §10) : un override manuel explicite (fourni par
         // l'utilisateur via l'onglet Configuration) est prioritaire sur
@@ -10148,11 +10415,16 @@ const BacktestCore = (() => {
         // jamais de poids à 0 inventés faute d'instrumentation manquante.
         if (!baselinePerf || !baselinePerf.n) return _legacyCausalWeightsFormula(performance);
         const { rawScore } = _computeContributionsBT(performance, baselinePerf);
-        const { weights } = ModelContributionEngine.normalizeContributions(rawScore);
+        // §3/§4 — collapse 7 modèles bruts → 5 clusters top-level (GoalModel/Elo/
+        // Forme/OffDef/H2H) AVANT normalisation finale. Remplace l'ancienne
+        // normalisation directe sur les 7 rawScore individuels.
+        const clusterScore = _collapseToClusterScoreBT(rawScore);
+        const { weights } = ModelContributionEngine.normalizeContributions(clusterScore);
         const total = Object.values(weights).reduce((a, b) => a + b, 0);
         if (total > 0) return weights;
-        // Aucun modèle éligible (N_TEST insuffisant pour tous) malgré un baseline
-        // valide : repli sur l'ancienne formule plutôt qu'un poids nul inventé.
+        // Aucun cluster éligible (N_TEST insuffisant pour tous ses membres) malgré
+        // un baseline valide : repli sur l'ancienne formule plutôt qu'un poids nul
+        // inventé. Repli 7 clés (legacy), accepté tel quel par normalizeWeights.
         return _legacyCausalWeightsFormula(performance);
     }
     // ANCIENNE FORMULE — branchée en second plan derrière ModelContributionScore
@@ -11201,11 +11473,17 @@ const BacktestCore = (() => {
         // nécessaires pour construire le calibrateur — hors périmètre de cette
         // modification, voir rapport final).
         const leagues=[...prepared.leagues.values()].sort((a,b)=>a.leagueId.localeCompare(b.leagueId));
-        const runSegment=async(groups,teams,eloState,history,performance,mode,collect,leagueName,empiricalTrackers,h2hIndex,baselinePerf,evalTotal)=>{
+        // CORRECTION DIRECTE — POIDS CAUSAUX 5 CLUSTERS (§2) : nouveau paramètre
+        // optionnel `frozenWeights`. TRAIN/VALIDATION ne le passent jamais (undefined)
+        // et conservent donc le recalcul causal existant, inchangé, à chaque groupe
+        // de dates. TEST le reçoit désormais TOUJOURS (poids figés juste avant TEST,
+        // voir plus bas) : causalWeights() n'est alors JAMAIS appelée pendant TEST —
+        // ni recalcul, ni adaptation, ni remplacement du snapshot figé.
+        const runSegment=async(groups,teams,eloState,history,performance,mode,collect,leagueName,empiricalTrackers,h2hIndex,baselinePerf,evalTotal,frozenWeights)=>{
             diagState.phase=mode.phase||diagState.phase;diagState.leagueName=leagueName;
             for(const group of groups){
                 yieldCounter++;await maybeYield();
-                const profile=mode.profile(history),weights=causalWeights(performance,leagueName,options.manualOverrides?.[leagueName]?.weights,baselinePerf),dateAudits=[];
+                const profile=mode.profile(history),weights=frozenWeights||causalWeights(performance,leagueName,options.manualOverrides?.[leagueName]?.weights,baselinePerf),dateAudits=[];
                 for(const match of group.matches){
                     const home=teams.get(match.homeTeamId)||[],away=teams.get(match.awayTeamId)||[];
                     if(home.length<CONFIG.minTeamHistory||away.length<CONFIG.minTeamHistory){insufficientHistoryMatches++;collect.excluded++;continue;}
@@ -11411,6 +11689,15 @@ const BacktestCore = (() => {
             const manualTemperature=options.manualOverrides?.[league.leagueName]?.temperature;
             const selectedTemperature=Number.isFinite(manualTemperature)?manualTemperature:(bestTemperature?bestTemperature.value:.85);
             const temperatureSource=Number.isFinite(manualTemperature)?'manuelle_utilisateur':(bestTemperature?'validation_grid_search_causal':'default_fallback_insufficient_validation');
+            // CORRECTION DIRECTE — POIDS CAUSAUX 5 CLUSTERS (§2) : POIDS FIGÉS ICI,
+            // une seule fois, à partir de `performance`/`baselinePerf` tels qu'accumulés
+            // causalement sur TRAIN+VALIDATION uniquement (TEST n'a pas encore commencé
+            // à ce point du code — mêmes objets que ceux lus par causalWeights() plus
+            // haut pendant VALIDATION, aucune donnée future). Ce vecteur est celui
+            // effectivement utilisé pour TOUT le segment TEST de ce championnat (voir
+            // frozenWeights passé à runSegment plus bas) et celui persisté tel quel dans
+            // weightsUsed/ConfigurationRegistry — jamais recalculé ni adapté pendant TEST.
+            const frozenWeights=causalWeights(performance,league.leagueName,options.manualOverrides?.[league.leagueName]?.weights,baselinePerf);
             // TEST (40%) : verrouillé, température fixée depuis VALIDATION (ou depuis le
             // réglage manuel explicite ci-dessus) uniquement — TEST n'intervient JAMAIS
             // dans ce choix, y compris en mode manuel.
@@ -11436,7 +11723,7 @@ const BacktestCore = (() => {
             // run (fermetures de la boucle unique) — aucune copie, aucune structure
             // supplémentaire proportionnelle au nombre de matchs. `leagueTestJobs`
             // est O(nombre de championnats), jamais O(nombre de matchs).
-            leagueTestJobs.push({league,teams,eloState,history,performance,empiricalTrackers,h2hIndex,leagueCollect,leagueManualOverride,leagueWeightOverride,tvtTest:tvt.test,warmupSplit,trainMatchesCount,leagueValidationCount,selectedTemperature,temperatureSource,temperatureCandidateReport,leagueCountAudit,countMarketStatKeys,baselinePerf,evalTotal});
+            leagueTestJobs.push({league,teams,eloState,history,performance,empiricalTrackers,h2hIndex,leagueCollect,leagueManualOverride,leagueWeightOverride,tvtTest:tvt.test,warmupSplit,trainMatchesCount,leagueValidationCount,selectedTemperature,temperatureSource,temperatureCandidateReport,leagueCountAudit,countMarketStatKeys,baselinePerf,evalTotal,frozenWeights});
             reportDiag();
             await new Promise(resolve => setTimeout(resolve, 0));
         }
@@ -11839,11 +12126,14 @@ const BacktestCore = (() => {
                 // moteur, inchangé par cet increment).
                 // ═══════════════════════════════════════════════════════════
                 for (const [testIndex, job] of leagueTestJobs.entries()) {
-                    const {league,teams,eloState,history,performance,empiricalTrackers,h2hIndex,leagueCollect,leagueManualOverride,leagueWeightOverride,tvtTest,warmupSplit,trainMatchesCount,leagueValidationCount,selectedTemperature,temperatureSource,temperatureCandidateReport,leagueCountAudit,countMarketStatKeys,baselinePerf,evalTotal} = job;
+                    const {league,teams,eloState,history,performance,empiricalTrackers,h2hIndex,leagueCollect,leagueManualOverride,leagueWeightOverride,tvtTest,warmupSplit,trainMatchesCount,leagueValidationCount,selectedTemperature,temperatureSource,temperatureCandidateReport,leagueCountAudit,countMarketStatKeys,baselinePerf,evalTotal,frozenWeights} = job;
                     diagState.leagueIndex=testIndex+1;diagState.leagueName=league.leagueName;diagState.phase='TEST';
-                    let leagueTested=0,leagueLastTestWeights=null;
+                    // CORRECTION DIRECTE — POIDS CAUSAUX 5 CLUSTERS (§2) : leagueLastTestWeights
+                    // (capture du DERNIER vecteur recalculé pendant TEST) supprimé — TEST utilise
+                    // désormais exclusivement `frozenWeights`, figé avant TEST (voir plus haut),
+                    // jamais recalculé ni remplacé ici.
+                    let leagueTested=0;
                     await runSegment(tvtTest,teams,eloState,history,performance,{phase:'TEST',profile:h=>({...leagueProfile(h),temperature:selectedTemperature}),onMatch:({match,prediction,weights,homeHistory,awayHistory})=>{
-                        leagueLastTestWeights=weights;
                         const result=observations(match,prediction,empiricalTrackers);
                         if(result.error){predictionErrors++;return;}
                         if(!__weightsUsedSample){const __wu=result.items.find(it=>it.weightsUsed);if(__wu)__weightsUsedSample=__wu.weightsUsed;}
@@ -11939,10 +12229,12 @@ const BacktestCore = (() => {
                                 }
                             }
                         }
-                    }},leagueCollect,league.leagueName,empiricalTrackers,h2hIndex,baselinePerf,evalTotal);
+                    }},leagueCollect,league.leagueName,empiricalTrackers,h2hIndex,baselinePerf,evalTotal,frozenWeights);
                     leagueReports.push({leagueId:league.leagueId,leagueName:league.leagueName,historicalMatches:league.matches.length,warmupMinimum:CONFIG.warmupMatches,warmupActualCount:warmupSplit.count,trainMatches:trainMatchesCount,validationMatches:leagueValidationCount,testMatches:tvtTest.reduce((s,g)=>s+g.matches.length,0),postWarmupMatches:warmupSplit.test.reduce((sum,group)=>sum+group.matches.length,0),insufficientHistoryMatches:leagueCollect.excluded,testedMatches:leagueTested,selectedTemperature,temperatureSource,temperatureCandidates:temperatureCandidateReport,
                         weightSource: leagueManualOverride?.weights ? 'manuelle_utilisateur' : (leagueWeightOverride ? 'weightOptimizationP2_statistique' : 'causal_interne_backtestcore'),
-                        weightsUsed: leagueManualOverride?.weights || leagueWeightOverride || leagueLastTestWeights || null,
+                        // weightsUsed === le vecteur figé juste avant TEST (frozenWeights),
+                        // jamais le dernier recalcul pendant TEST (leagueLastTestWeights supprimé).
+                        weightsUsed: leagueManualOverride?.weights || leagueWeightOverride || frozenWeights || null,
                         // §2/§20 FINALISATION — détail par modèle (status/nTest/brierScore/
                         // logLossScore/eceScore/stabilityScore/robustnessScore/contributionScore),
                         // calculé UNE FOIS ici sur l'état final de `performance`/`baselinePerf`
@@ -12276,6 +12568,43 @@ const BacktestCore = (() => {
         const stopped=()=>typeof options.shouldStop==='function'&&options.shouldStop();
         const manual=(options.manualOverrides&&options.manualOverrides[leagueName])||null;
         const store=ValueTestEngine.createStore();ValueTestEngine.ensureLeague(store,leagueName);
+        // CORRECTION DIRECTE — SÉLECTION UNIQUE PAR MARCHÉ (TEST VALUE) : seed
+        // reproductible enregistré dans les métadonnées du run (voir `return` en fin
+        // de fonction). Défaut fixe (jamais Date.now/Math.random) : un appel sans seed
+        // explicite reste déterministe et reproductible d'une exécution à l'autre.
+        const seed=(typeof options.seed==='string'&&options.seed.trim())?options.seed.trim():(typeof options.seed==='number'&&Number.isFinite(options.seed))?String(options.seed):'default';
+        // Tirage déterministe SANS état séquentiel ni stockage : chaque tirage est
+        // dérivé indépendamment de (seed, championnat, match, marché) via le PRNG à
+        // graine déjà existant et déjà utilisé ailleurs pour la reproductibilité
+        // (PredictiveCoreV30.createRng/hashSeed — Monte Carlo — AUCUNE nouvelle
+        // logique de hachage/PRNG introduite ici). Un seul nombre est tiré (rng()),
+        // rien n'est conservé après l'appel — "ne pas stocker tous les tirages".
+        // Appelé UNIQUEMENT après construction complète de l'ensemble des sélections
+        // admissibles pour ce match+marché (jamais avant, jamais en fonction du
+        // résultat réel — voir chaque site d'appel ci-dessous).
+        const pickAdmissibleIndex=(marketFamily,matchIdentity,n)=>{
+            if(!(n>0))return -1;
+            if(n===1)return 0;
+            const rng=PredictiveCoreV30.createRng(`valuetest_market_pick|${seed}|${leagueName}|${matchIdentity}|${marketFamily}`);
+            return Math.floor(rng()*n);
+        };
+        // ═══════════════════ AJOUT ADDITIF — TEST VALUE : FILTRE FAIR ODDS (avant tirage) ═══════════════════
+        // Ne modifie AUCUNE probabilité (lecture seule, aucune écriture sur `c.prob`).
+        // Construit l'ensemble ADMISSIBLE avant tout tirage aléatoire, pour tous les marchés
+        // concernés (1X2, Double Chance, BTTS, Totals, Team Totals, Handicap Asiatique,
+        // marchés de comptage : Tirs/Tirs cadrés/Corners/Cartons jaunes/Cartons rouges/Fautes) :
+        //   0 < calibratedProbability < 1  ET  FairOdds = 1/calibratedProbability <= 2.50.
+        // EXCEPTION Score Exact (isFairOddsCapped=false ci-dessous, appliquée à son site d'appel
+        // uniquement) : aucune limite de Fair Odds, seule la validité 0<p<1 est exigée — volontaire,
+        // les scores exacts ont naturellement des Fair Odds élevées (cf. cahier des charges).
+        const FAIR_ODDS_CAP=2.50;
+        const isProbabilityValid=prob=>Number.isFinite(prob)&&prob>0&&prob<1;
+        const isFairOddsAdmissible=(prob,capped)=>isProbabilityValid(prob)&&(!capped||(1/prob)<=FAIR_ODDS_CAP);
+        // Filtre l'ensemble des candidats déjà construits (probabilité déjà calibrée, résultat déjà
+        // déterminé — AUCUN recalcul ici) sur `c.prob`, sans jamais le modifier. capped=true partout
+        // sauf Score Exact (appelé avec capped=false à son site d'appel dédié plus bas).
+        const admissibleCandidates=(candidates,capped=true)=>candidates.filter(c=>isFairOddsAdmissible(c.prob,capped));
+        // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE : FILTRE FAIR ODDS ═══════════════════
         // ═══════════════════ AJOUT ADDITIF — TEST VALUE PARTIE 2 ═══════════════════
         // Table multi-marchés / multi-sélections, SANS AUCUNE COTE BOOKMAKER : réutilise
         // EXACTEMENT le registre centralisé déjà utilisé par CALCULS/Analyse (MARKETS,
@@ -12307,17 +12636,21 @@ const BacktestCore = (() => {
         const statsAcc=ValueTestEngine.createMarketStatsAccumulator();
         const capitalRows=[];
         const pushAllMarketsRow=(match,marketTab,marketId,selectionId,label,line,calibratedProbability,resultLabel)=>{
+            const lineNorm=(typeof line==='number'&&Number.isFinite(line))?line:null;
             const row={
                 championship:leagueName,date:match.dateKey,home:match.homeTeamName,away:match.awayTeamName,
                 matchIdentity:match.matchIdentity,marketTab,marketId,selectionId,label,
-                line:(typeof line==='number'&&Number.isFinite(line))?line:null,
+                line:lineNorm,
                 calibratedProbability:Number.isFinite(calibratedProbability)?calibratedProbability:null,
-                result:resultLabel
+                result:resultLabel,
+                // §IDENTITÉ — championnat + matchIdentity + marketKey + line + selection + seed.
+                seed,
+                selectionIdentity:`${leagueName}|${match.matchIdentity}|${marketId}|${lineNorm}|${selectionId}|${seed}`
             };
             statsAcc.addRow(row);
             if(ValueTestEngine.isCapitalEligibleRow(row))capitalRows.push(row);
         };
-        const GOAL_MARKET_TAB={'1x2':'1x2','btts':'btts','totals_over':'over_under','totals_under':'over_under','team_totals_over':'total_equipe','team_totals_under':'total_equipe'};
+        const GOAL_MARKET_TAB={'1x2':'1x2','double_chance':'double_chance','btts':'btts','totals_over':'over_under','totals_under':'over_under','team_totals_over':'total_equipe','team_totals_under':'total_equipe'};
         // ═══════════════════ FIN AJOUT ADDITIF (déclarations) — TEST VALUE PARTIE 2 ═══════════════════
         const warmupSplit=splitWarmup(dateGroups(league.matches));
         const teams=new Map(),eloState=new Map(),history=[],empiricalTrackers=new Map(),h2hIndex=new Map();
@@ -12414,6 +12747,17 @@ const BacktestCore = (() => {
             // manquante ajoutée ci-dessous avec EXACTEMENT la même fonction MarketCalibrationRegistry.apply que
             // Score Exact/marchés de comptage/AH (aucune formule nouvelle) ; les sélections déjà calibrées par
             // le bloc ODDS_BINDINGS (1X2, O/U 2.5) réutilisent leur valeur telle quelle, sans recalcul.
+            // CORRECTION DIRECTE — SÉLECTION UNIQUE PAR MARCHÉ : l'ensemble des
+            // sélections admissibles est d'abord entièrement construit (probabilité/
+            // calibration/résultat déjà calculés exactement comme avant, AUCUN
+            // changement de formule), PUIS un tirage aléatoire uniforme désigne LA
+            // seule sélection retenue pour ce match+marché — jamais en fonction du
+            // résultat (déjà connu ici mais non utilisé pour le tirage). Familles :
+            // '1x2' (1/X/2), 'btts', 'totals' (Total Buts, over+under, toutes lignes
+            // réunies — cf. exemple du cahier des charges), 'team_totals_home'/'_away'
+            // (Domicile et Extérieur restent deux marchés distincts, cf. libellés
+            // "Domicile"/"Extérieur" déjà utilisés partout ailleurs dans ce fichier).
+            const goalCandidatesByFamily=new Map();
             for(const it of items){
                 const tab=GOAL_MARKET_TAB[it.marketId];
                 if(!tab)continue;
@@ -12431,7 +12775,24 @@ const BacktestCore = (() => {
                     const calP2=MarketCalibrationRegistry.apply(leagueName,CalibrationKeys.forObservation(it),it.modelProbability);
                     probPartie2=(Boolean(calP2.calibrated)&&usable(calP2.probability))?calP2.probability:null;
                 }
-                pushAllMarketsRow(match,tab,it.marketId,it.selectionId,it.selectionLabel,ln,probPartie2,resultLabel);
+                const family=tab==='total_equipe'?(/home/i.test(it.selectionId)?'team_totals_home':(/away/i.test(it.selectionId)?'team_totals_away':'team_totals')):(tab==='over_under'?'totals':tab);
+                if(!goalCandidatesByFamily.has(family))goalCandidatesByFamily.set(family,[]);
+                goalCandidatesByFamily.get(family).push({tab,marketId:it.marketId,selectionId:it.selectionId,label:it.selectionLabel,line:ln,prob:probPartie2,resultLabel});
+            }
+            for(const[family,candidates]of goalCandidatesByFamily){
+                // FILTRE FAIR ODDS (avant tirage) — 1X2/Double Chance/BTTS/Totals/Team Totals :
+                // 0<p<1 ET FairOdds<=2.50. Si aucune sélection admissible, rien n'est tiré pour ce
+                // marché (ni sélection inventée, ni 0.5, ni contournement) : `admissible.length`
+                // vaut alors 0 et pickAdmissibleIndex renvoie -1.
+                // AJOUT ADDITIF — matchesExamined : ce marché (tab) est examiné pour ce match QUEL QUE SOIT le
+                // résultat du tirage ci-dessous (admissible vide ou non) ; tous les candidats de cette famille
+                // partagent le même c.tab (voir construction ci-dessus), pris sur le premier candidat.
+                statsAcc.addExamined(leagueName,candidates[0].tab);
+                const admissible=admissibleCandidates(candidates,true);
+                const idx=pickAdmissibleIndex(family,match.matchIdentity,admissible.length);
+                if(idx<0)continue;
+                const c=admissible[idx];
+                pushAllMarketsRow(match,c.tab,c.marketId,c.selectionId,c.label,c.line,c.prob,c.resultLabel);
             }
             // Marchés de comptage (Tirs/Tirs cadrés/Corners/Cartons jaunes/Cartons rouges/Fautes) — même fonction générique
             // MarketModelEngine.predictCountMarket que CALCULS (ligne ~11286), même seuil de backtestabilité par championnat.
@@ -12440,12 +12801,16 @@ const BacktestCore = (() => {
                 for(const statKey of countMarketStatKeys){
                     const audit=leagueCountAudit[statKey];
                     if(!audit||!audit.backtestable)continue;
+                    // AJOUT ADDITIF — matchesExamined : ce marché de comptage est examiné pour ce match dès lors
+                    // qu'il est backtestable pour le championnat, quel que soit le résultat du tirage ci-dessous.
+                    statsAcc.addExamined(leagueName,statKey);
                     const lines=MarketModelEngine.DEFAULT_LINES[statKey]||[];
                     const countResult=MarketModelEngine.predictCountMarket(statKey,match.homeTeamId,homeHistoryCM,match.awayTeamId,awayHistoryCM,history,lines,MarketModelEngine.buildRefereeContext(match));
                     if(countResult.status!=='CALCULÉ')continue;
                     const def=countResult.def,homeTotal=number(match[def.homeKey]),awayTotal=number(match[def.awayKey]);
                     const hasActual=Number.isFinite(homeTotal)&&Number.isFinite(awayTotal),actualTotal=hasActual?homeTotal+awayTotal:null;
                     const cmMarketId=`count_${statKey}`;
+                    const cmCandidates=[];
                     for(const line of lines){
                         const marketResult=countResult.markets[`over_under_${line}`];
                         if(!marketResult)continue;
@@ -12456,25 +12821,44 @@ const BacktestCore = (() => {
                         const actualOver=hasActual?(actualTotal>line):null;
                         const overResult=actualOver===null?'NON DISPONIBLE':(actualOver?'GAGNANT':'PERDANT');
                         const underResult=actualOver===null?'NON DISPONIBLE':(!actualOver?'GAGNANT':'PERDANT');
-                        pushAllMarketsRow(match,statKey,cmMarketId,`over_${line}`,`${def.label} Over ${line}`,line,overOk?overCal.probability:null,overResult);
-                        pushAllMarketsRow(match,statKey,cmMarketId,`under_${line}`,`${def.label} Under ${line}`,line,underOk?underCal.probability:null,underResult);
+                        cmCandidates.push({tab:statKey,marketId:cmMarketId,selectionId:`over_${line}`,label:`${def.label} Over ${line}`,line,prob:overOk?overCal.probability:null,resultLabel:overResult});
+                        cmCandidates.push({tab:statKey,marketId:cmMarketId,selectionId:`under_${line}`,label:`${def.label} Under ${line}`,line,prob:underOk?underCal.probability:null,resultLabel:underResult});
                     }
+                    // Marché = statKey (ex. "corners") — toutes lignes/côtés réunis, même
+                    // principe que "Total Goals" dans l'exemple du cahier des charges.
+                    // FILTRE FAIR ODDS (avant tirage) — Tirs/Tirs cadrés/Corners/Cartons
+                    // jaunes/Cartons rouges/Fautes : 0<p<1 ET FairOdds<=2.50.
+                    const cmAdmissible=admissibleCandidates(cmCandidates,true);
+                    const cmIdx=pickAdmissibleIndex(statKey,match.matchIdentity,cmAdmissible.length);
+                    if(cmIdx>=0){const c=cmAdmissible[cmIdx];pushAllMarketsRow(match,c.tab,c.marketId,c.selectionId,c.label,c.line,c.prob,c.resultLabel);}
                 }
             }
             // Score exact — mêmes Top-8 candidats calibrés que CALCULS (ligne ~11273, PredictiveCoreV30.topExactScores).
             if(Array.isArray(prediction.matrix)&&prediction.matrix.length){
+                // AJOUT ADDITIF — matchesExamined : Score Exact examiné pour ce match dès qu'une matrice existe.
+                statsAcc.addExamined(leagueName,'score_exact');
+                const esCandidates=[];
                 for(const cell of PredictiveCoreV30.topExactScores(prediction.matrix,8)){
                     const mId=`score_exact_${cell.homeGoals}_${cell.awayGoals}`;
                     const cal=MarketCalibrationRegistry.apply(leagueName,CalibrationKeys.forObservation({marketId:mId,selectionId:mId}),cell.probability);
                     const ok=Boolean(cal.calibrated)&&usable(cal.probability);
                     const actualES=match.FTHG===cell.homeGoals&&match.FTAG===cell.awayGoals;
-                    pushAllMarketsRow(match,'score_exact',mId,mId,`Score exact ${cell.homeGoals}-${cell.awayGoals}`,null,ok?cal.probability:null,actualES?'GAGNANT':'PERDANT');
+                    esCandidates.push({tab:'score_exact',marketId:mId,selectionId:mId,label:`Score exact ${cell.homeGoals}-${cell.awayGoals}`,line:null,prob:ok?cal.probability:null,resultLabel:actualES?'GAGNANT':'PERDANT'});
                 }
+                // EXCEPTION SCORE EXACT — pas de plafond Fair Odds (capped=false) : seule la
+                // validité 0<p<1 est exigée (les scores exacts ont naturellement des Fair Odds
+                // élevées, exclusion volontaire du plafond 2.50 sur ce marché uniquement).
+                const esAdmissible=admissibleCandidates(esCandidates,false);
+                const esIdx=pickAdmissibleIndex('score_exact',match.matchIdentity,esAdmissible.length);
+                if(esIdx>=0){const c=esAdmissible[esIdx];pushAllMarketsRow(match,c.tab,c.marketId,c.selectionId,c.label,c.line,c.prob,c.resultLabel);}
             }
             // Handicap Asiatique — TOUTES les 34 sélections (17 lignes × 2 côtés), SANS filtrer sur la disponibilité
             // d'une cote bookmaker (contrairement à la boucle AH existante plus bas, propre à l'ancien VALUE TEST avec cote).
             if(typeof AsianHandicapEngine!=='undefined'&&Array.isArray(prediction.matrix)&&prediction.matrix.length){
+                // AJOUT ADDITIF — matchesExamined : Handicap Asiatique examiné pour ce match dès qu'une matrice existe.
+                statsAcc.addExamined(leagueName,'asian_handicap');
                 const AH_RESULT_LABEL={WIN:'GAGNANT',HALF_WIN:'DEMI-GAGNANT',PUSH:'REMBOURSÉ',HALF_LOSS:'DEMI-PERDANT',LOSS:'PERDANT'};
+                const ahCandidatesP2=[];
                 for(const sel of AsianHandicapEngine.SELECTIONS){
                     const breakdown=AsianHandicapEngine.probabilitiesFromMatrix(prediction.matrix,sel.side,sel.handicap);
                     const rawProbAh=AsianHandicapEngine.usedProbability(breakdown);
@@ -12482,8 +12866,12 @@ const BacktestCore = (() => {
                     const stateAh=AsianHandicapEngine.settle(sel.side,sel.handicap,match.FTHG,match.FTAG);
                     const calAh=MarketCalibrationRegistry.apply(leagueName,AsianHandicapEngine.calibrationKey(sel.selectionId),rawProbAh);
                     const okAh=Boolean(calAh.calibrated)&&usable(calAh.probability);
-                    pushAllMarketsRow(match,'asian_handicap',sel.marketId,sel.selectionId,sel.label,sel.handicap,okAh?calAh.probability:null,AH_RESULT_LABEL[stateAh]||'NON DISPONIBLE');
+                    ahCandidatesP2.push({tab:'asian_handicap',marketId:sel.marketId,selectionId:sel.selectionId,label:sel.label,line:sel.handicap,prob:okAh?calAh.probability:null,resultLabel:AH_RESULT_LABEL[stateAh]||'NON DISPONIBLE'});
                 }
+                // FILTRE FAIR ODDS (avant tirage) — Handicap Asiatique : 0<p<1 ET FairOdds<=2.50.
+                const ahAdmissibleP2=admissibleCandidates(ahCandidatesP2,true);
+                const ahIdxP2=pickAdmissibleIndex('asian_handicap',match.matchIdentity,ahAdmissibleP2.length);
+                if(ahIdxP2>=0){const c=ahAdmissibleP2[ahIdxP2];pushAllMarketsRow(match,c.tab,c.marketId,c.selectionId,c.label,c.line,c.prob,c.resultLabel);}
             }
             // ═══ FIN AJOUT ADDITIF — TEST VALUE PARTIE 2 ═══
             ValueTestEngine.observeMatch(store,match,items);
@@ -12520,7 +12908,33 @@ const BacktestCore = (() => {
         // un tableau complet.
         const marketStats=statsAcc.finalize();
         const totalSelectionsTheoretical=marketStats.reduce((s,m)=>s+m.selections,0);
-        return{leagueName,snapshot,testMatchesTotal:testTotal,testMatchesVisited:testVisited,replayMatches:replayTotal,selectedTemperature,temperatureSource,elapsedMs,debug,predictionErrors,marketStats,capitalRows,totalSelectionsTheoretical};
+        // ═══════════════════ AJOUT ADDITIF — TEST VALUE : UNIT STATS championship×marketKey ═══════════════════
+        // (1) Fusionne matchesExamined (accumulateur séparé, voir ValueTestEngine.createMarketStatsAccumulator)
+        // dans marketStats — enrichissement de champs supplémentaires uniquement, AUCUN champ existant modifié/
+        // supprimé (statsSummaryTable/_lastValueTestAllMarkets continuent de lire exactement les mêmes clés
+        // qu'avant). Un marché examiné mais jamais tiré (0 sélection admissible sur tout le TEST) n'existe pas
+        // encore dans marketStats : une ligne compacte est ajoutée pour lui (selections/valid/invalid=0).
+        const examinedStats=statsAcc.finalizeExamined();
+        const marketStatsKey=m=>`${m.championship}\u0001${m.marketTab}`;
+        for(const m of marketStats){
+            const e=examinedStats.find(x=>marketStatsKey(x)===marketStatsKey(m));
+            m.matchesExamined=e?e.matchesExamined:0;
+            m.selectionsDrawn=m.selections;
+        }
+        for(const e of examinedStats){
+            if(marketStats.some(m=>marketStatsKey(m)===marketStatsKey(e)))continue;
+            marketStats.push({championship:e.championship,marketTab:e.marketTab,selections:0,valid:0,invalid:0,noProbability:0,nonBinaryResult:0,meanProbability:null,observedFrequency:null,brier:null,logLoss:null,ece:null,mce:null,bins:null,matchesExamined:e.matchesExamined,selectionsDrawn:0});
+        }
+        // (2) Statistiques financières compactes par marché — RÉUTILISE simulateCapital() (AUCUNE formule
+        // concurrente de Kelly/settlement) sur capitalRows déjà filtré (voir pushAllMarketsRow), keepDetail=false
+        // (n'a besoin ici que de .byMarket, jamais de curve/matches détaillés). Paramètres Capital transmissibles
+        // par l'appelant (options.capitalOptions) — sinon mêmes valeurs par défaut que simulateCapital.
+        const capitalSim=ValueTestEngine.simulateCapital(capitalRows,Object.assign({},options.capitalOptions,{keepDetail:false}));
+        const financialByMarket=(capitalSim&&capitalSim.ok&&Array.isArray(capitalSim.byMarket))?capitalSim.byMarket:[];
+        // (3) Fusion pure championship×marketKey — aucune sélection individuelle conservée.
+        const unitStats=ValueTestEngine.buildUnitStatsRows(marketStats,financialByMarket);
+        // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE : UNIT STATS ═══════════════════
+        return{leagueName,snapshot,testMatchesTotal:testTotal,testMatchesVisited:testVisited,replayMatches:replayTotal,selectedTemperature,temperatureSource,elapsedMs,debug,predictionErrors,marketStats,capitalRows,totalSelectionsTheoretical,unitStats,seed};
     }
     const predictSnapshot=(home,away,profile,context)=>probabilities(home,away,profile,context).audit;
     // REVISED (Phase 2, section 1): public export purged of everything exclusively
@@ -17274,7 +17688,75 @@ const TrackingFinancialMetrics = (() => {
         if (metrics.capitalRoi !== null && !Number.isFinite(metrics.capitalRoi)) metrics.capitalRoi = null;
         return metrics;
     }
-    return Object.freeze({ validBookmakerOdd, formatPercentPointsFr, formatRatioPercentFr, aggregate });
+    // increment69B — AJOUT ADDITIF (Tracking/Suivi, §2) : variante STREAMING de aggregate()
+    // ci-dessus. Formules IDENTIQUES ligne à ligne (mêmes règles de sélection de cote/mise,
+    // mêmes formules de profit par résultat win/loss/push/half_win/half_loss, même définition
+    // d'un "pari financier valide") — seule la SOURCE change : `streamAll` est appelée avec un
+    // callback `onRow`, exactement comme DB.streamStore('tracking', { onRow }) (increment68),
+    // et chaque entrée est traitée puis libérée, jamais retenue dans un tableau complet.
+    // hooks.onSafeEntry(entry) / hooks.onSafeSettled(entry, stake, profit) sont des points
+    // d'extension OPTIONNELS, appelés aux mêmes étapes que aggregate() alimentait
+    // metrics.safeEntries / metrics.safeSettledEntries — un appelant qui a besoin d'une vue
+    // bornée (5 derniers paris, P/L par championnat) l'accumule lui-même dans le hook (Map/
+    // tableau de taille bornée), sans jamais matérialiser tout l'historique. Aucun calcul
+    // financier n'est modifié par rapport à aggregate() : mêmes montants produits pour un
+    // même historique (vérifié par self-test, aggregate() vs aggregateStream() sur les mêmes
+    // données synthétiques).
+    async function aggregateStream(streamAll, initialCapital, hooks = {}) {
+        const metrics = { settledFinancialBets: 0, pendingBets: 0, invalidOddsBets: 0, invalidEntries: 0, wins: 0, losses: 0, pushes: 0, halfWins: 0, halfLosses: 0, totalStaked: 0, totalProfit: 0, yield: null, capitalRoi: null, diagnostics: [] };
+        let index = 0;
+        await streamAll(raw => {
+            const currentIndex = index++;
+            const entry = strictSnapshot(raw);
+            if (entry === null) {
+                metrics.invalidEntries++;
+                metrics.diagnostics.push({ code: 'invalid_tracking_financial_entry', index: currentIndex });
+                return;
+            }
+            if (hooks.onSafeEntry) hooks.onSafeEntry(entry);
+            const result = entry.result, odds = selectedOdds(entry);
+            if (result === 'pending') metrics.pendingBets++;
+            if (odds === null) {
+                metrics.invalidOddsBets++;
+                metrics.diagnostics.push({ code: 'invalid_bookmaker_odds', id: entry.id ?? null, index: currentIndex });
+                return;
+            }
+            if (!['win', 'partial_win', 'loss', 'push', 'half_win', 'half_loss'].includes(result)) return;
+            const stake = selectedStake(entry);
+            if (typeof stake !== 'number' || !Number.isFinite(stake) || !(stake > 0) || Object.is(stake, -0)) return;
+            let profit;
+            if (result === 'push') profit = 0;
+            else if (result === 'loss') profit = -stake;
+            else if (result === 'half_loss') profit = -stake * 0.5;
+            else if (result === 'half_win') {
+                const persistedProfit = firstOwn(entry, entry.type === 'coupon' ? ['totalProfit', 'profit'] : ['profit', 'totalProfit']);
+                profit = typeof persistedProfit === 'number' && Number.isFinite(persistedProfit) ? persistedProfit : stake * (odds - 1) / 2;
+            } else {
+                const persistedProfit = firstOwn(entry, entry.type === 'coupon' ? ['totalProfit', 'profit'] : ['profit', 'totalProfit']);
+                profit = typeof persistedProfit === 'number' && Number.isFinite(persistedProfit) ? persistedProfit : stake * (odds - 1);
+            }
+            const nextStaked = metrics.totalStaked + stake, nextProfit = metrics.totalProfit + profit;
+            if (!Number.isFinite(profit) || !Number.isFinite(nextStaked) || !Number.isFinite(nextProfit)) {
+                metrics.diagnostics.push({ code: 'financial_accounting_overflow', id: entry.id ?? null, index: currentIndex });
+                return;
+            }
+            metrics.settledFinancialBets++;
+            metrics.totalStaked = nextStaked;
+            metrics.totalProfit = nextProfit;
+            if (hooks.onSafeSettled) hooks.onSafeSettled(entry, stake, profit);
+            if (result === 'win' || result === 'partial_win') metrics.wins++;
+            else if (result === 'loss') metrics.losses++;
+            else if (result === 'half_win') metrics.halfWins++;
+            else if (result === 'half_loss') metrics.halfLosses++;
+            else metrics.pushes++;
+        });
+        metrics.yield = metrics.totalStaked > 0 ? metrics.totalProfit / metrics.totalStaked * 100 : null;
+        metrics.capitalRoi = typeof initialCapital === 'number' && Number.isFinite(initialCapital) && initialCapital > 0 && !Object.is(initialCapital, -0) ? metrics.totalProfit / initialCapital * 100 : null;
+        if (metrics.yield !== null && !Number.isFinite(metrics.yield)) metrics.yield = null;
+        if (metrics.capitalRoi !== null && !Number.isFinite(metrics.capitalRoi)) metrics.capitalRoi = null;
+        return metrics;
+    }
+    return Object.freeze({ validBookmakerOdd, formatPercentPointsFr, formatRatioPercentFr, aggregate, aggregateStream });
 })();
 
 
@@ -18184,6 +18666,7 @@ const ValueTestUI = (() => {
     const MARKET_TABS = Object.freeze([
         { id: 'all', label: 'Tous' },
         { id: '1x2', label: '1X2' },
+        { id: 'double_chance', label: 'Double Chance' },
         { id: 'btts', label: 'BTTS' },
         { id: 'over_under', label: 'Total Buts' },
         { id: 'total_equipe', label: 'Total Équipe' },
@@ -18346,8 +18829,19 @@ const ValueTestUI = (() => {
     // mises/P&L/capital/drawdown : il ne lit ni n'altère jamais
     // ValueTestEngine.probabilisticStatsByMarket (Partie 3), qui reste calculée
     // séparément sur calibratedProbability/result uniquement.
-    let _capitalSettings = { initialCapital: 10000, kellyDivisor: 5, capMode: 'A', capPreset: 'disabled', capCustomPct: 10 };
+    let _capitalSettings = { initialCapital: 10000, kellyDivisor: 5, capMode: 'A', capPreset: 'disabled', capCustomPct: 10, marketFilter: 'all' };
     let _capitalResult = null;
+    // AJOUT ADDITIF — sélecteur de marché pour la simulation Capital UNIQUEMENT (§1 de la
+    // spécification « TEST VALUE — Ajout du sélecteur de marché »). Réutilise EXACTEMENT les
+    // marketKey déjà centraux de MARKET_TABS (aucun nouvel identifiant créé). N'affecte ni
+    // BacktestCore.runValueTest, ni App.runValueTestAllChampionships, ni capitalRows lui-même :
+    // seul le tableau passé à simulateCapital() est filtré, par un simple Array.filter sur des
+    // données déjà en mémoire (aucune copie complète conservée par marché, aucun nouveau tableau
+    // du type allMarketSelections/allCapitalRowsByMarket — voir runCapitalSimulation ci-dessous).
+    function setCapitalMarketFilter(v) {
+        _capitalSettings.marketFilter = MARKET_TABS.some(t => t.id === v) ? v : 'all';
+        _rerenderCurrent();
+    }
     // CORRECTIF MÉMOIRE — CAPITAL : pagination du détail par sélection (même règle DETAIL_PAGE_SIZE
     // que allMarketsTable/thresholdSelectionOptions — jamais toutes les lignes injectées d'un coup).
     let _capitalDetailPage = 0;
@@ -18363,8 +18857,13 @@ const ValueTestUI = (() => {
         if (!am || !sameLg(am.league, lg)) { _capitalResult = { league: lg, ok: false, reason: 'PAS_DE_TOUS_LES_MARCHES' }; _rerenderCurrent(); return; }
         const s = _capitalSettings;
         const capPercent = s.capMode === 'B' ? (s.capPreset === 'custom' ? (Number(s.capCustomPct) || 0) / 100 : (s.capPreset === 'disabled' ? null : Number(s.capPreset) / 100)) : null;
-        const res = ValueTestEngine.simulateCapital(am.capitalRows, { initialCapital: s.initialCapital, kellyDivisor: s.kellyDivisor, edgeDecimal: currentEdgeDecimal(), capMode: s.capMode, capPercent });
-        _capitalResult = Object.assign({ league: lg }, res);
+        // AJOUT ADDITIF — filtre par marché (§1-§2) : appliqué AVANT la simulation financière (jamais
+        // seulement à l'affichage après coup), par un simple filter sur capitalRows déjà en mémoire.
+        // « Tous les marchés » (marketFilter === 'all') conserve exactement le comportement d'origine
+        // (am.capitalRows non filtré, tous marchés confondus, comme avant l'ajout de ce sélecteur).
+        const filteredRows = s.marketFilter === 'all' ? am.capitalRows : am.capitalRows.filter(r => r.marketTab === s.marketFilter);
+        const res = ValueTestEngine.simulateCapital(filteredRows, { initialCapital: s.initialCapital, kellyDivisor: s.kellyDivisor, edgeDecimal: currentEdgeDecimal(), capMode: s.capMode, capPercent });
+        _capitalResult = Object.assign({ league: lg, marketFilter: s.marketFilter }, res);
         _capitalDetailPage = 0;
         _rerenderCurrent();
     }
@@ -18372,6 +18871,9 @@ const ValueTestUI = (() => {
         const s = _capitalSettings;
         const presets = [['disabled', 'Désactivée'], ['5', '5 %'], ['10', '10 %'], ['15', '15 %'], ['20', '20 %'], ['custom', 'Personnalisée']];
         return `<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;align-items:flex-end;">
+            <label style="font-size:.72rem;">Marché à simuler<br><select onchange="ValueTestUI.setCapitalMarketFilter(this.value)">
+                ${MARKET_TABS.map(t => `<option value="${t.id}"${s.marketFilter === t.id ? ' selected' : ''}>${esc(t.id === 'all' ? 'Tous les marchés' : t.label)}</option>`).join('')}
+            </select></label>
             <label style="font-size:.72rem;">Capital initial<br><input type="number" min="1" step="1" value="${s.initialCapital}" style="width:110px;" onchange="ValueTestUI.setCapitalInitial(this.value)"></label>
             <label style="font-size:.72rem;">Diviseur Kelly (existant)<br><input type="number" min="0.1" step="0.5" value="${s.kellyDivisor}" style="width:80px;" onchange="ValueTestUI.setKellyDivisor(this.value)"></label>
             <label style="font-size:.72rem;">Mode d'exposition<br><select onchange="ValueTestUI.setCapMode(this.value)">
@@ -18604,6 +19106,75 @@ const ValueTestUI = (() => {
     }
     // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE PARTIE 1 ═══════════════════
 
+    // ═══════════════════ AJOUT ADDITIF — TEST VALUE increment3C ═══════════════════
+    // Connecte l'onglet « 🌍 Tous les championnats » à App.runValueTestAllChampionships() (orchestrateur
+    // déjà validé, increment75). UI STRICTEMENT CONSOMMATRICE : aucune probabilité, Fair Odds, Kelly,
+    // Capital, sélection ou calibration n'est recalculée ici. Ne conserve QUE le résultat compact
+    // { seed, timestamp, championshipsCount, matchesCount, marketsCount, unitStats, errors } retourné par
+    // l'orchestrateur (_orchResult) — jamais capitalRows/marketStats bruts, jamais de tableau
+    // allMarketSelections/allCapitalRows/allResults/allChampionshipResults.
+    let _orchSeed = 'default';
+    let _orchAllRunning = false;
+    let _orchLastSeenLeague = null;
+    let _orchCount = 0;          // championnats DÉJÀ démarrés dans le run courant (affichage seul)
+    let _orchResult = null;      // dernier résultat compact de App.runValueTestAllChampionships()
+    let _orchRunError = null;
+    function getOrchestratorSeed() { return _orchSeed; }
+    function setOrchestratorSeed(v) { _orchSeed = (typeof v === 'string') ? v : String(v ?? ''); _rerenderCurrent(); }
+    // startOrchestratorRun/finishOrchestratorRun : appelées UNIQUEMENT par le handler UI (App.handleValueTestAllChampionshipsClick),
+    // jamais par l'orchestrateur lui-même — pur affichage d'état, aucun recalcul.
+    function startOrchestratorRun() { _orchAllRunning = true; _orchLastSeenLeague = null; _orchCount = 0; _orchResult = null; _orchRunError = null; _rerenderCurrent(); }
+    function finishOrchestratorRun(result, errorMessage) { _orchAllRunning = false; _orchResult = result || null; _orchRunError = errorMessage || null; _rerenderCurrent(); }
+    function orchestratorUnitStatsTable(rows) {
+        if (!Array.isArray(rows) || !rows.length) return `<div style="font-size:.78rem;opacity:.85;">Aucune statistique disponible.</div>`;
+        const body = rows.map(r => [
+            esc(r.championship), esc(r.marketKey), int(r.matchesExamined), int(r.selectionsDrawn),
+            '—', int(r.wins), int(r.losses), int(r.push),
+            isNum(r.roi) ? pct(r.roi, 2) : NDFULL, isNum(r.pnl) ? sdec(r.pnl, 2) : NDFULL, '—'
+        ]);
+        return table(['Championnat', 'Marché', 'Matchs examinés', 'Sélections', 'Bets', 'Wins', 'Losses', 'Push', 'ROI / Yield', 'Profit', 'Capital'], body);
+    }
+    function orchestratorErrorsBlock(errors) {
+        if (!Array.isArray(errors) || !errors.length) return '';
+        const lines = errors.map(e => `<div style="font-size:.74rem;color:var(--gold);margin:2px 0;">• ${esc(e.league || '—')} : ${esc(e.message || e.code || 'erreur inconnue')}</div>`).join('');
+        return `<div style="margin-top:8px;"><div style="font-size:.78rem;color:var(--gold);">⚠️ ${int(errors.length)} championnat(s) avec erreur</div>${lines}</div>`;
+    }
+    function orchestratorBlock(ctx, leagues) {
+        const total = leagues.length;
+        const runningHere = _orchAllRunning; // un seul run orchestrateur à la fois (affichage seul)
+        const busyOther = !!(ctx && ctx.job && !(runningHere && ctx.job.kind === 'VALUE_TEST'));
+        const disabled = runningHere || busyOther;
+        const currentIdx = Math.min(total, Math.max(_orchCount, (runningHere && ctx && ctx.job && ctx.job.kind === 'VALUE_TEST') ? 1 : 0));
+        const progressLine = runningHere
+            ? `<div style="font-size:.78rem;color:var(--cyan);margin:6px 0;">⏳ TEST VALUE — Championnat ${int(currentIdx)} / ${int(total)}${(ctx && ctx.job && ctx.job.kind === 'VALUE_TEST') ? ' — ' + esc(ctx.job.league) : ''}</div>`
+            : '';
+        const seedField = `<label style="font-size:.72rem;">Seed<br><input type="text" value="${esc(_orchSeed)}" ${disabled ? 'disabled' : ''} style="width:140px;padding:4px 6px;" onchange="ValueTestUI.setOrchestratorSeed(this.value)"></label>`;
+        const btn = `<button type="button" class="btn btn-sm btn-primary" ${disabled ? 'disabled' : ''} onclick="App.handleValueTestAllChampionshipsClick()">▶ LANCER TEST VALUE — TOUS LES CHAMPIONNATS</button>`;
+        let resultBlock = '';
+        if (_orchRunError) {
+            resultBlock = `<div class="trap-alert" style="margin:8px 0;">❌ ${esc(_orchRunError)}</div>`;
+        } else if (_orchResult) {
+            const r = _orchResult;
+            const selectionsTirees = (Array.isArray(r.unitStats) ? r.unitStats : []).reduce((s, u) => s + (Number.isFinite(u.selectionsDrawn) ? u.selectionsDrawn : 0), 0);
+            resultBlock = `
+                <div class="bt-section-title" style="font-size:.8rem;margin-top:10px;">Résumé</div>
+                ${row('Seed', esc(r.seed))}
+                ${row('Championnats', int(r.championshipsCount))}
+                ${row('Matchs examinés', int(r.matchesCount))}
+                ${row('Marchés examinés', int(r.marketsCount))}
+                ${row('Sélections tirées', int(selectionsTirees))}
+                ${orchestratorErrorsBlock(r.errors)}
+                ${orchestratorUnitStatsTable(r.unitStats)}
+            `;
+        }
+        return `<div class="bt-section-title" style="font-size:.85rem;">🎯 TEST VALUE — TOUS LES CHAMPIONNATS (orchestrateur)</div>
+            <div style="font-size:.72rem;opacity:.8;margin:2px 0 8px;">Lance App.runValueTestAllChampionships() championnat par championnat (un seul en mémoire à la fois, aucune accumulation globale de sélections). Même seed = mêmes sélections.</div>
+            <div class="flex gap-2 flex-wrap" style="align-items:flex-end;margin:8px 0;">${seedField}${btn}</div>
+            ${progressLine}
+            ${resultBlock}`;
+    }
+    // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE increment3C ═══════════════════
+
     const idOf = n => (typeof Utils !== 'undefined' && typeof Utils.normalizeLeagueIdentity === 'function') ? Utils.normalizeLeagueIdentity(n) : String(n).trim().toLowerCase();
     // Sous-onglets = championnats importés ∪ championnats des snapshots persistés, dédupliqués par identité
     // normalisée (jamais de liste codée en dur). Le nom importé prime pour l'affichage.
@@ -18721,6 +19292,14 @@ const ValueTestUI = (() => {
     // ctx : { importedLeagues, snapshots (objet nom->snapshot), running:boolean, runStatus:string }
     function render(ctx) {
         _lastArgs = ctx;
+        // AJOUT ADDITIF — TEST VALUE increment3C : suivi de progression de l'orchestrateur (affichage seul).
+        // ctx.job est le verrou courant (_calcJob), déjà mis à jour par App._beginCalcJob/_endCalcJob à
+        // CHAQUE championnat de la boucle de App.runValueTestAllChampionships — aucune donnée nouvelle lue,
+        // seulement un changement de championnat détecté pour incrémenter un compteur d'affichage.
+        if (_orchAllRunning && ctx && ctx.job && ctx.job.kind === 'VALUE_TEST' && ctx.job.league !== _orchLastSeenLeague) {
+            _orchLastSeenLeague = ctx.job.league;
+            _orchCount++;
+        }
         const host = typeof document !== 'undefined' ? document.getElementById('valueTestContent') : null;
         const html = build(ctx);
         if (host) host.innerHTML = html;
@@ -18733,6 +19312,7 @@ const ValueTestUI = (() => {
         if (_selected === ALL_LEAGUES) {
             return `<div id="valueTestRunStatus" style="font-size:.78rem;color:var(--cyan);min-height:1em;">${esc(ctx.runStatus || '')}</div>
                 ${tabs(leagues, _selected)}
+                ${orchestratorBlock(ctx, leagues)}
                 ${buildAllLeaguesView(ctx, leagues)}`;
         }
         const lg = _selected, snap = snapshotFor(ctx.snapshots, lg);
@@ -18757,7 +19337,9 @@ const ValueTestUI = (() => {
         const el = typeof document !== 'undefined' ? document.getElementById('valueTestLive') : null;
         if (el && job) el.innerHTML = progressHtml(job);
     }
-    return Object.freeze({ render, build, leaguesPresent, selectLeagueIndex, setRunStatus, estimateTestMatches, getSelectedLeague, setProgress, selectAllLeagues, setEdgeTier, setEdgeCustom, currentEdgeDecimal, selectMarketTab, setMarketPage, selectSectionTab, setCapitalInitial, setKellyDivisor, setCapMode, setCapPreset, setCapCustom, runCapitalSimulation, setCapitalDetailPage, setThresholdCapitalEnabled, selectThresholdEdge, selectThresholdDetail, setThresholdOptionPage });
+    return Object.freeze({ render, build, leaguesPresent, selectLeagueIndex, setRunStatus, estimateTestMatches, getSelectedLeague, setProgress, selectAllLeagues, setEdgeTier, setEdgeCustom, currentEdgeDecimal, selectMarketTab, setMarketPage, selectSectionTab, setCapitalInitial, setKellyDivisor, setCapMode, setCapPreset, setCapCustom, setCapitalMarketFilter, runCapitalSimulation, setCapitalDetailPage, setThresholdCapitalEnabled, selectThresholdEdge, selectThresholdDetail, setThresholdOptionPage,
+        // AJOUT ADDITIF — TEST VALUE increment3C
+        getOrchestratorSeed, setOrchestratorSeed, startOrchestratorRun, finishOrchestratorRun });
 })();
 if (typeof globalThis !== 'undefined') globalThis.ValueTestUI = ValueTestUI;
 
@@ -19933,10 +20515,20 @@ const App = {
     teams: [],  
     matches: [],  
     addedMatches: [],  
-    trackingData: [],  
+    // increment69B — SUPPRESSION de `trackingData` (tableau complet de l'historique
+    // Tracking en RAM). Voir DB.getTracking/getTrackingByIds/countTracking/streamStore
+    // ('tracking') : chaque usage lit désormais IndexedDB de façon ciblée (id précis,
+    // page courante, filtre) ou en streaming (statistiques, exports), jamais un cache
+    // global complet — voir renderTracking/renderCapitalPage/updateTrackingSummary/
+    // renderDashboard/TrackingAggregator plus bas dans ce fichier.
     analysedMatches: [],  
     coupon: [],  
-    results: [],  
+    // increment69 — RÉSULTATS : plus de tableau `results` chargé intégralement en
+    // RAM (voir DB.getAllResults/App.renderResults). `resultsCount` ne retient
+    // qu'un compteur (IDBObjectStore.count, sans matérialiser les lignes) pour le
+    // badge d'en-tête ; la page Résultats lit IndexedDB à la demande (curseur +
+    // filtre + pagination), jamais un cache complet de l'historique.
+    resultsCount: 0,  
     marketResults: [],  
     leagues: [],  
     leagueAverages: [],  
@@ -20089,10 +20681,15 @@ const App = {
             this.matches = await DB.getAllMatches();  
             this.teams = await DB.getAllTeams();  
             this.addedMatches = await DB.getAllAddedMatches();  
-            this.trackingData = await DB.getAllTracking();  
+            // increment69B — Tracking n'est plus chargé intégralement en RAM ici (voir
+            // suppression de App.trackingData) : renderTracking/renderCapitalPage/
+            // updateTrackingSummary (appelés plus bas via renderCurrentPage) relisent
+            // IndexedDB directement, filtré/paginé/en streaming selon le besoin.
             this.analysedMatches = await DB.getAllAnalysedMatches();  
             this.coupon = await DB.getAllCoupon();  
-            this.results = await DB.getAllResults();  
+            // increment69 — plus de chargement complet de l'historique results en RAM :
+            // uniquement le compteur (voir DB.countResults / App.renderResults).
+            this.resultsCount = await DB.countResults();  
             this.marketResults = await DB.getAllMarketResults();  
             this.leagues = await DB.getAllLeagues();  
             this.leagueAverages = await DB.getAllLeagueAverages();  
@@ -20168,8 +20765,8 @@ const App = {
             'prompts': () => {},  
             'matchs': () => this.renderAnalysedMatches(),  
             'coupon': () => this.renderCoupon(),  
-            'tracking': () => { this.renderTracking(); this.renderCapitalPage(); },  
-            'results': () => this.renderResults(),  
+            'tracking': () => { this.renderTracking(); this.renderCapitalPage(); this.populateStatsLeagueSelectors(); this.refreshTrackingStats(); },  
+            'results': () => { this.populateStatsLeagueSelectors(); this.renderResults(); },  
             'performance': () => this.renderPerformance(),
             'valuetest': () => this.renderValueTest(),  
             'import': () => {},  
@@ -20251,7 +20848,7 @@ const App = {
         if (teamCount) teamCount.textContent = this.teams.length;
         if (matchCount) matchCount.textContent = this.matches.length;
         if (leagueCount) leagueCount.textContent = leagueNames.size;
-        if (resultCount) resultCount.textContent = this.results.length;
+        if (resultCount) resultCount.textContent = this.resultsCount || 0;
         if (seasonCount) seasonCount.textContent = totalSeasons;
     },
     refreshUI(updateHeaderCounters = true) {
@@ -23143,7 +23740,10 @@ La priorité est la qualité des sélections, pas la quantité.`;
     },  
   
     async validateSpecialBet() {  
-        const specialBets = this.trackingData.filter(b => b.special === true && b.result === 'pending');  
+        // increment69B — lecture filtrée (curseur IndexedDB) : seuls les paris spéciaux
+        // en attente sont conservés (sous-ensemble borné), jamais tout l'historique.
+        const specialBets = [];
+        await DB.streamStore('tracking', { predicate: b => b.special === true && b.result === 'pending', onRow: b => { specialBets.push(b); } });
         if (specialBets.length === 0) {  
             showToast('Aucun pari spécial en attente', 'info');  
             return;  
@@ -23167,8 +23767,9 @@ La priorité est la qualité des sélections, pas la quantité.`;
         modal.classList.remove('hidden');  
     },  
   
-    openSpecialBetValidation(betId) {  
-        const bet = this.trackingData.find(b => b.id === betId);  
+    async openSpecialBetValidation(betId) {  
+        // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+        const bet = await DB.getTracking(betId);  
         if (!bet) { showToast('Pari introuvable', 'error'); return; }  
         if (!TrackingFinancialMetrics.validBookmakerOdd(bet.odd)) { showToast('Règlement impossible : invalid_bookmaker_odds', 'error'); return; }
         this._editingBetId = betId;  
@@ -23594,14 +24195,15 @@ La priorité est la qualité des sélections, pas la quantité.`;
             return;
         }
 
-        const [trackingData, couponEntries, capitalEntries] = await Promise.all([
-            DB.getAllTracking(), DB.getAllCoupon(), DB.getCapitalHistory()
+        // increment69B — plus de rechargement complet de Tracking en RAM : seule l'entrée
+        // qui vient d'être placée est relue, par id (lecture ciblée) ; renderTracking()
+        // (juste en dessous) relit ensuite IndexedDB lui-même pour l'affichage de la liste.
+        const [persistedCoupon, couponEntries, capitalEntries] = await Promise.all([
+            DB.getTracking(placement.trackingId), DB.getAllCoupon(), DB.getCapitalHistory()
         ]);
-        this.trackingData = trackingData;
         this.coupon = couponEntries;
         this._applyCapitalEntries(capitalEntries);
         this.syncCapitalMirror();
-        const persistedCoupon = this.trackingData.find(entry => entry.id === placement.trackingId);
         this.renderTracking();  
         this.renderCoupon();  
         this.updateCouponBadge();  
@@ -23949,7 +24551,10 @@ La priorité est la qualité des sélections, pas la quantité.`;
         let selections = null;
         let resolutionMode = null;
         try {
-            const coupon = this.trackingData.find(entry => entry.id === couponId);
+            // increment69B — lecture ciblée par id (plus de dépendance à App.trackingData) ;
+            // aucune modification du règlement lui-même (settleBetAtomic, plus bas, reste
+            // l'unique source de vérité pour l'écriture).
+            const coupon = await DB.getTracking(couponId);
             if (!coupon || coupon.type !== 'coupon') throw DB._financialError('tracking_type_invalid');
             if (options.confirmMessage && !confirm(options.confirmMessage)) {
                 this._couponSettlementLocks.delete(couponId);
@@ -23997,10 +24602,12 @@ La priorité est la qualité des sélections, pas la quantité.`;
         };
 
         try {
-            const trackingData = await runPostCommitStep('reload_tracking', () => DB.getAllTracking());
-            if (trackingData !== undefined) this.trackingData = trackingData;
-            const storedResults = await runPostCommitStep('reload_results', () => DB.getAllResults());
-            if (storedResults !== undefined) this.results = storedResults;
+            // increment69B — après règlement, Tracking n'est plus rechargé intégralement
+            // en RAM (settleBetAtomic reste la seule source de vérité pour l'écriture) :
+            // render_tracking (plus bas) relit directement IndexedDB, filtré/paginé, pour
+            // la page courante — même principe que resultsCount/render_results ci-dessous.
+            const resultsCount = await runPostCommitStep('reload_results', () => DB.countResults());
+            if (resultsCount !== undefined) this.resultsCount = resultsCount;
             await runPostCommitStep('reload_capital', () => this.reloadCapitalAuthority());
 
             if (transactionResult.applied && resolutionMode === 'detailed') {
@@ -24074,8 +24681,9 @@ La priorité est la qualité des sélections, pas la quantité.`;
         return this._settleCouponAtomic(coupon.id, selections, { resolutionMode: 'detailed', closeModal: true });
     },
 
-    viewCouponDetails(couponId) {  
-        const coupon = this.trackingData.find(t => t.id === couponId);  
+    async viewCouponDetails(couponId) {  
+        // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+        const coupon = await DB.getTracking(couponId);  
         if (!coupon || coupon.type !== 'coupon') return;  
         const modal = document.getElementById('couponDetailModal');  
         const content = document.getElementById('couponDetailContent');  
@@ -24308,10 +24916,13 @@ La priorité est la qualité des sélections, pas la quantité.`;
         const autoValue = first ? (first.balanceAfter ?? first.bankroll) : null;
         return (typeof autoValue === 'number' && Number.isFinite(autoValue) && autoValue > 0) ? autoValue : null;
     },
-    renderCapitalPage() {  
+    // increment69B — plus de lecture de App.trackingData (supprimé) : synthèse financière
+    // calculée en streaming (curseur IndexedDB sur 'tracking'), jamais un tableau complet
+    // en RAM. Mêmes formules que TrackingFinancialMetrics.aggregate() (voir aggregateStream).
+    async renderCapitalPage() {  
         if (this.currentPage !== 'tracking') return;  
         document.getElementById('capitalDisplay').textContent = this.bankroll.toLocaleString() + ' CDF';
-        const financial = TrackingFinancialMetrics.aggregate(this.trackingData, this.getEffectiveInitialBankroll());
+        const financial = await TrackingFinancialMetrics.aggregateStream(onRow => DB.streamStore('tracking', { onRow }), this.getEffectiveInitialBankroll());
         const totalProfit = financial.totalProfit;
   
         const profitEl = document.getElementById('capitalProfit');  
@@ -24393,13 +25004,41 @@ La priorité est la qualité des sélections, pas la quantité.`;
         showToast('Capital réinitialisé à 0', 'info');  
     },  
   
-    renderTracking() {  
+    // increment69B — SUPPRESSION du chargement complet de l'historique Tracking en RAM :
+    // IndexedDB → curseur filtré (App._trackingFilterPredicate) → pagination → UI, plus
+    // jamais IndexedDB → getAll() → App.trackingData (tableau complet) → UI. Même principe
+    // que renderResults (increment69) : Passage 1 (DB.streamStore, increment68) ne retient
+    // que les id des lignes qui passent le filtre courant (Tous/En attente/Gagnés/Perdus) ;
+    // Passage 2 relit uniquement les id de la page courante via DB.getTrackingByIds. Ordre
+    // conservé à l'identique de l'ancien this.trackingData (ordre d'insertion croissant,
+    // aucun tri ajouté ici, contrairement à renderResults qui trie par date).
+    _trackingFilterPredicate() {
+        const f = this.trackingFilter;
+        if (f === 'all') return () => true;
+        if (f === 'win') return b => b.result === 'win' || b.result === 'partial_win' || b.result === 'half_win';
+        return b => b.result === f;
+    },
+    async renderTracking() {  
         const list = document.getElementById('trackingList');  
-        const filtered = this.trackingFilter === 'all' ? this.trackingData : this.trackingData.filter(b => {  
-            if (this.trackingFilter === 'win') return b.result === 'win' || b.result === 'partial_win' || b.result === 'half_win';  
-            return b.result === this.trackingFilter;  
-        });  
-        if (filtered.length === 0) { list.innerHTML = '<div class="text-sub fs-06" style="padding:12px;">Aucun pari</div>'; return; }  
+        const predicate = this._trackingFilterPredicate();
+        const matchedIds = [];
+        await DB.streamStore('tracking', { predicate, onRow: b => { matchedIds.push(b.id); } });
+        const pageSize = this.trackingPageSize || 50;
+        const pageCount = Math.max(1, Math.ceil(matchedIds.length / pageSize));
+        if (this.trackingPage >= pageCount) this.trackingPage = pageCount - 1;
+        if (this.trackingPage < 0) this.trackingPage = 0;
+        const pageInfo = document.getElementById('trackingPageInfo');
+        if (pageInfo) pageInfo.textContent = `Page ${this.trackingPage + 1} / ${pageCount} (${matchedIds.length} pari(s))`;
+        if (matchedIds.length === 0) {
+            list.innerHTML = '<div class="text-sub fs-06" style="padding:12px;">Aucun pari</div>';
+            this.updateTrackingSummary();
+            this.updateCouponBadge();
+            return;
+        }  
+        const pageIds = matchedIds.slice(this.trackingPage * pageSize, (this.trackingPage + 1) * pageSize);
+        const rows = await DB.getTrackingByIds(pageIds);
+        const rowsById = new Map(rows.map(r => [r.id, r]));
+        const filtered = pageIds.map(id => rowsById.get(id)).filter(Boolean);
         let h = `<div class="tracking-grid header" style="grid-template-columns:1.2fr 0.6fr 0.5fr 0.6fr 0.5fr 0.5fr 0.6fr;">  
             <span>Match / Coupon</span><span>Type</span><span>Cote</span><span>Mise</span><span>Statut</span><span>Profit</span><span>Actions</span>  
         </div>`;  
@@ -24458,7 +25097,8 @@ La priorité est la qualité des sélections, pas la quantité.`;
     },  
   
     async quickWinCoupon(couponId) {
-        const coupon = this.trackingData.find(entry => entry.id === couponId);
+        // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+        const coupon = await DB.getTracking(couponId);
         if (!coupon || coupon.type !== 'coupon') { showToast('Coupon non valide', 'error'); return; }
         const selections = coupon.selections.map(selection => ({ ...selection, result: 'win', actualScore: null }));
         return this._settleCouponAtomic(couponId, selections, {
@@ -24467,7 +25107,8 @@ La priorité est la qualité des sélections, pas la quantité.`;
         });
     },
     async quickLossCoupon(couponId) {
-        const coupon = this.trackingData.find(entry => entry.id === couponId);
+        // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+        const coupon = await DB.getTracking(couponId);
         if (!coupon || coupon.type !== 'coupon') { showToast('Coupon non valide', 'error'); return; }
         const selections = coupon.selections.map(selection => ({ ...selection, result: 'loss', actualScore: null }));
         return this._settleCouponAtomic(couponId, selections, {
@@ -24476,18 +25117,20 @@ La priorité est la qualité des sélections, pas la quantité.`;
         });
     },
 
-    openCouponScoreModalById(couponId) {  
-        const coupon = this.trackingData.find(t => t.id === couponId);  
+    async openCouponScoreModalById(couponId) {  
+        // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+        const coupon = await DB.getTracking(couponId);  
         if (!coupon || coupon.type !== 'coupon') return;  
         if (coupon.status === 'settled') { showToast('Ce coupon est déjà réglé', 'info'); return; }  
         this.openCouponScoreModal(coupon);  
     },  
   
-    filterTracking(f) { this.trackingFilter = f; this.renderTracking(); },  
+    filterTracking(f) { this.trackingFilter = f; this.trackingPage = 0; this.renderTracking(); },  
   
     async deleteBet(id) {  
         if (confirm('Supprimer ce pari ?')) {  
-            const bet = this.trackingData.find(b => b.id === id);  
+            // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+            const bet = await DB.getTracking(id);  
             if (bet && bet.result === 'pending') {  
                 const stake = bet.totalStake || bet.stake || 0;  
                 this.bankroll += stake;  
@@ -24500,7 +25143,8 @@ La priorité est la qualité des sélections, pas la quantité.`;
                 this.autoSave();  
             }  
             await DB.deleteTracking(id);  
-            this.trackingData = await DB.getAllTracking();  
+            // increment69B — plus de rechargement complet en RAM : renderTracking()
+            // relit directement IndexedDB (filtré/paginé) pour l'affichage.
             this.renderTracking();  
             this.updateCouponBadge();  
             showToast('Pari supprimé', 'info');  
@@ -24509,7 +25153,10 @@ La priorité est la qualité des sélections, pas la quantité.`;
   
     async clearAllTracking() {  
         if (confirm('Supprimer tous les paris ?')) {  
-            const pending = this.trackingData.filter(b => b.result === 'pending');  
+            // increment69B — lecture filtrée (curseur IndexedDB) : seuls les paris en
+            // attente sont conservés (sous-ensemble borné), jamais tout l'historique.
+            const pending = [];
+            await DB.streamStore('tracking', { predicate: b => b.result === 'pending', onRow: b => { pending.push(b); } });
             let totalRefund = 0;  
             for (const bet of pending) totalRefund += bet.totalStake || bet.stake || 0;  
             if (totalRefund > 0) {  
@@ -24523,15 +25170,17 @@ La priorité est la qualité des sélections, pas la quantité.`;
                 this.autoSave();  
             }  
             await DB.clearAllTracking();  
-            this.trackingData = [];  
+            this.trackingPage = 0;
             this.renderTracking();  
             this.updateCouponBadge();  
             showToast('Tous les paris supprimés', 'info');  
         }  
     },  
   
-    updateTrackingSummary() {  
-        const financial = TrackingFinancialMetrics.aggregate(this.trackingData, this.getEffectiveInitialBankroll());
+    // increment69B — synthèse streaming (curseur IndexedDB), plus de dépendance à
+    // App.trackingData. Mêmes formules que TrackingFinancialMetrics.aggregate().
+    async updateTrackingSummary() {  
+        const financial = await TrackingFinancialMetrics.aggregateStream(onRow => DB.streamStore('tracking', { onRow }), this.getEffectiveInitialBankroll());
         const decisions = financial.wins + financial.losses;
         const wr = decisions > 0 ? financial.wins / decisions * 100 : 0;
         const profit = financial.totalProfit;
@@ -24547,8 +25196,9 @@ La priorité est la qualité des sélections, pas la quantité.`;
         document.getElementById('trackProfit').style.color = profit >= 0 ? 'var(--green)' : 'var(--red)';  
     },  
   
-    openScoreFromTracking(betId) {  
-        const bet = this.trackingData.find(b => b.id === betId);  
+    async openScoreFromTracking(betId) {  
+        // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+        const bet = await DB.getTracking(betId);  
         if (!bet) { showToast('Pari introuvable', 'error'); return; }  
         if (bet.result !== 'pending') { showToast('Ce pari est déjà terminé', 'info'); return; }  
         if (!TrackingFinancialMetrics.validBookmakerOdd(bet.odds)) { showToast('Règlement impossible : invalid_bookmaker_odds', 'error'); return; }
@@ -24653,8 +25303,11 @@ La priorité est la qualité des sélections, pas la quantité.`;
         document.getElementById('scoreModal').classList.remove('hidden');  
     },  
   
-    enterScoreForTracking() {  
-        const pending = this.trackingData.filter(b => b.result === 'pending');  
+    async enterScoreForTracking() {  
+        // increment69B — lecture filtrée (curseur IndexedDB) : seuls les paris en attente
+        // sont conservés (sous-ensemble borné), jamais tout l'historique.
+        const pending = [];
+        await DB.streamStore('tracking', { predicate: b => b.result === 'pending', onRow: b => { pending.push(b); } });
         if (pending.length === 0) { showToast('Aucun pari en attente', 'info'); return; }  
         const betList = pending.map((b, i) => `${i+1}. ${b.type === 'coupon' ? '🎫 Coupon' : b.homeTeam + ' vs ' + b.awayTeam} - ${b.type === 'coupon' ? b.selections?.length + ' sel.' : Utils.cleanMarket(b.betType)}`).join('\n');  
         const choice = prompt(`Sélectionnez un pari en attente:\n${betList}\n\nEntrez le numéro:`);  
@@ -24770,7 +25423,8 @@ La priorité est la qualité des sélections, pas la quantité.`;
             return;  
         }  
   
-        const bet = this.trackingData.find(b => b.id === betId);  
+        // increment69B — lecture ciblée par id, plus de dépendance à App.trackingData.
+        const bet = await DB.getTracking(betId);  
         if (!bet) { showToast('⚠️ Pari introuvable', 'error'); return; }  
   
         const cleanKey = bet.key || Utils.cleanMarket(bet.betType);  
@@ -24902,15 +25556,40 @@ La priorité est la qualité des sélections, pas la quantité.`;
     },  
   
     // --- Résultats ---  
-    renderResults() {  
+    // increment69 — SUPPRESSION du chargement complet de l'historique en RAM
+    // (§RESULTS) : IndexedDB → curseur filtré → pagination → UI, plus jamais
+    // IndexedDB → getAll() → App.results (tableau complet) → UI.
+    // Passage 1 (streaming, DB.streamStore existant de l'increment68) : ne retient
+    // que {id, timestamp} des lignes qui passent le filtre — jamais la ligne
+    // complète — pour reconstituer l'ordre chronologique et le nombre total sans
+    // matérialiser l'historique (empreinte mémoire indépendante de sa taille).
+    // Passage 2 : seules les lignes de la page courante (≤ resultsPageSize) sont
+    // relues intégralement via DB.getResultsByIds. Aucune nouvelle variable
+    // globale contenant tout l'historique n'est créée.
+    async renderResults() {  
         const list = document.getElementById('resultsList');  
-        const results = this.results || [];  
-        if (results.length === 0) {  
+        const predicate = this._resultsFilterPredicate();
+        const matchedRefs = [];
+        await DB.streamStore('results', { predicate, onRow: r => { matchedRefs.push({ id: r.id, timestamp: r.timestamp || 0 }); } });
+        matchedRefs.sort((a, b) => b.timestamp - a.timestamp);
+        // increment68 — pagination DOM bornée (§11) : n'insère jamais plus d'une page de
+        // lignes dans le DOM, quelle que soit la taille de l'historique filtré.
+        const pageSize = this.resultsPageSize || 50;
+        const pageCount = Math.max(1, Math.ceil(matchedRefs.length / pageSize));
+        if (this.resultsPage >= pageCount) this.resultsPage = pageCount - 1;
+        if (this.resultsPage < 0) this.resultsPage = 0;
+        const pageInfo = document.getElementById('resultsPageInfo');
+        if (pageInfo) pageInfo.textContent = `Page ${this.resultsPage + 1} / ${pageCount} (${matchedRefs.length} résultat(s))`;
+        if (matchedRefs.length === 0) {  
             list.innerHTML = '<div class="text-sub fs-06" style="padding:12px;">Aucun résultat enregistré</div>';  
+            document.getElementById('resultCount').textContent = 0;
             return;  
         }  
-        const sorted = [...results].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));  
-        list.innerHTML = sorted.map(r => {
+        const pageRefs = matchedRefs.slice(this.resultsPage * pageSize, (this.resultsPage + 1) * pageSize);
+        const rows = await DB.getResultsByIds(pageRefs.map(ref => ref.id));
+        const rowsById = new Map(rows.map(r => [r.id, r]));
+        const pageRows = pageRefs.map(ref => rowsById.get(ref.id)).filter(Boolean);
+        list.innerHTML = pageRows.map(r => {
             const hasScore = Number.isInteger(r.hg) && r.hg >= 0 && Number.isInteger(r.ag) && r.ag >= 0;
             const hasStake = typeof r.stake === 'number' && Number.isFinite(r.stake);
             const hasProfit = typeof r.profit === 'number' && Number.isFinite(r.profit);
@@ -24932,35 +25611,21 @@ La priorité est la qualité des sélections, pas la quantité.`;
                 ${r.special ? `<div class="text-sub fs-06" style="font-size:0.4rem;">🔵 Spécial</div>` : ''}  
             </div>`;
         }).join('');
-        document.getElementById('resultCount').textContent = results.length;  
+        document.getElementById('resultCount').textContent = matchedRefs.length;  
     },  
   
-    exportResultsCSV() {  
-        if (this.results.length === 0) { showToast('Aucun résultat', 'error'); return; }  
-        const csvCell = value => {
-            const text = value === null || value === undefined ? '' : String(value);
-            return /[;,"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-        };
-        let csv = 'Date;Match;Ligue;Score;Marché;Clé;Résultat;Mise;Profit;Modèle;Spécial\n';
-        this.results.forEach(r => {  
-            const match = `${r.homeTeam} vs ${r.awayTeam}`;  
-            const score = Number.isFinite(r.hg) && Number.isFinite(r.ag) ? `${r.hg}-${r.ag}` : 'Score non renseigné';
-            const stake = typeof r.stake === 'number' && Number.isFinite(r.stake) ? r.stake : '';
-            const profit = typeof r.profit === 'number' && Number.isFinite(r.profit) ? r.profit : '';
-            csv += [r.date, match, r.league || 'Inconnu', score, r.market || '', r.key || '', r.result, stake, profit, r.model || '', r.special ? 'Oui' : 'Non']
-                .map(csvCell).join(';') + '\n';
-        });  
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });  
-        const url = URL.createObjectURL(blob);  
-        const a = document.createElement('a'); a.href = url; a.download = `results_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url);  
-        showToast('Export CSV terminé', 'success');  
-    },  
+    // increment69 — l'ancien exportResultsCSV() synchrone (basé sur this.results, le
+    // tableau complet en RAM) est supprimé : il était de toute façon déjà masqué par
+    // la version par curseur de l'increment68 définie plus bas dans ce même objet
+    // (clé dupliquée => seule la dernière définition JS était utilisée). Cette
+    // suppression retire la dernière dépendance restante à this.results dans le
+    // système RESULTS ; le bouton CSV continue d'utiliser la version par curseur.
   
     async clearResults() {  
         if (confirm('Effacer tous les résultats ?')) {  
             await DB.clearResults();  
-            this.results = [];  
-            this.renderResults();  
+            this.resultsCount = 0;  
+            await this.renderResults();  
             showToast('Résultats effacés', 'info');  
             this.autoSave();  
         }  
@@ -25208,6 +25873,114 @@ La priorité est la qualité des sélections, pas la quantité.`;
             }
         } finally { this._endCalcJob(job); }
     },
+
+    // ============================================================
+    // AJOUT ADDITIF — ORCHESTRATEUR GLOBAL TEST VALUE (championnat par championnat)
+    // ------------------------------------------------------------
+    // Exécute BacktestCore.runValueTest() successivement pour CHAQUE championnat importé, un seul à la fois
+    // (jamais deux championnats en mémoire simultanément), et ne conserve QUE les statistiques compactes
+    // unitStats (championship×marketKey) de chacun. Réutilise TEL QUEL : _importedLeaguesSummary,
+    // _valueTestPrecheck, _beginCalcJob/_endCalcJob (même verrou « un seul calcul à la fois » que CALCULS/VALUE
+    // TEST manuel), _leagueMatches, BacktestCore.runValueTest. AUCUN second moteur TEST VALUE, AUCUNE formule
+    // de calibration/température/poids/Kelly/settlement/Capital modifiée ou dupliquée — ce n'est qu'un appel
+    // répété, séquentiel, de la fonction déjà existante et déjà validée.
+    // Isolation mémoire : `scoped` (matchs du championnat) et `res` (dont res.capitalRows/res.marketStats) ne
+    // vivent QUE le temps d'une itération de boucle — aucune référence n'en sort, donc rien n'est retenu au-delà
+    // de `unitStatsGlobal` (compact) entre deux championnats. Pas de tableau global de sélections, pas de
+    // allMarketSelections, pas de _lastValueTestAllMarkets.rows — cette mémoire session (Partie 2, mono-
+    // championnat, alimentée par runValueTestForChampionship) n'est ni lue ni modifiée ici.
+    async runValueTestAllChampionships(options = {}) {
+        options = options || {};
+        if (this._calcJob || (typeof globalThis !== 'undefined' && globalThis.calibrationRunning)) {
+            throw Object.assign(new Error('CALC_JOB_BUSY'), { code: 'CALC_JOB_BUSY', message: ManualCalcGate.busyMessage(this._calcJob) || 'Un calcul est déjà en cours.' });
+        }
+        // SEED UNIQUE POUR TOUT LE RUN — même normalisation que celle DÉJÀ appliquée à l'intérieur de
+        // BacktestCore.runValueTest() lorsqu'aucun seed n'est fourni (repli fixe 'default', jamais Date.now/
+        // Math.random) : AUCUN nouveau générateur introduit, seulement calculé une fois ici pour être transmis
+        // identique à tous les championnats (sinon chaque appel isolé retomberait certes déjà sur le même
+        // défaut fixe 'default', mais un seed explicite fourni par l'appelant doit, lui, être propagé tel quel).
+        const seed = (typeof options.seed === 'string' && options.seed.trim()) ? options.seed.trim()
+            : (typeof options.seed === 'number' && Number.isFinite(options.seed)) ? String(options.seed)
+            : 'default';
+        const leagues = this._importedLeaguesSummary();
+        let championshipsCount = 0, matchesCount = 0;
+        const unitStatsGlobal = []; // SEULE accumulation globale : lignes compactes championship×marketKey — jamais de sélections individuelles.
+        const errors = [];
+        for (const info of (Array.isArray(leagues) ? leagues : [])) {
+            if (typeof options.shouldStop === 'function' && options.shouldStop()) break;
+            const leagueName = info.name;
+            const pre = this._valueTestPrecheck(leagueName); // précheck EXISTANT, inchangé
+            if (!pre.ok) { errors.push({ league: leagueName, code: pre.code, message: pre.message }); continue; }
+            const job = this._beginCalcJob('VALUE_TEST', leagueName); // même verrou EXISTANT que le VALUE TEST manuel
+            if (!job) { errors.push({ league: leagueName, code: 'CALC_JOB_BUSY', message: ManualCalcGate.busyMessage(this._calcJob) || 'Un calcul est déjà en cours.' }); break; }
+            try {
+                const scoped = this._leagueMatches(leagueName); // UN SEUL championnat — jamais tous les matchs chargés ensemble
+                const res = await BacktestCore.runValueTest(scoped, {
+                    leagueScope: leagueName,
+                    seed, // même seed transmis à TOUS les championnats
+                    shouldStop: () => job.stopRequested || (typeof options.shouldStop === 'function' && options.shouldStop())
+                });
+                championshipsCount++;
+                matchesCount += Number.isFinite(res.testMatchesVisited) ? res.testMatchesVisited : 0;
+                // Ne récupérer QUE unitStats (compact, O(nb marchés)) — jamais res.capitalRows ni res.marketStats
+                // bruts, jamais une sélection individuelle (voir ValueTestEngine.buildUnitStatsRows).
+                for (const row of (Array.isArray(res.unitStats) ? res.unitStats : [])) unitStatsGlobal.push(row);
+                // `res` (et donc res.capitalRows/res.marketStats/res.debug/res.snapshot) sort de portée ici :
+                // aucune variable ne le retient au-delà de cette itération — libéré avant le championnat suivant.
+            } catch (error) {
+                errors.push({ league: leagueName, code: error && error.code, message: this._calcErrorLabel(error) });
+            } finally {
+                this._endCalcJob(job);
+            }
+        }
+        const distinctMarketKeys = new Set(unitStatsGlobal.map(r => r.marketKey));
+        return {
+            seed,
+            timestamp: new Date().toISOString(),
+            championshipsCount,
+            matchesCount,
+            marketsCount: distinctMarketKeys.size,
+            unitStats: unitStatsGlobal,
+            errors
+        };
+    },
+    // ============================================================
+    // AJOUT ADDITIF — increment3C : connexion UI ↔ App.runValueTestAllChampionships (UI UNIQUEMENT)
+    // ------------------------------------------------------------
+    // TRIGGER : bouton « ▶ LANCER TEST VALUE — TOUS LES CHAMPIONNATS » (onglet 🌍 Tous les championnats,
+    // ValueTestUI) → App.handleValueTestAllChampionshipsClick() → App.runValueTestAllChampionships(...)
+    // (orchestrateur EXISTANT, increment75, INCHANGÉ). Ce handler ne fait QUE : lire le seed affiché,
+    // empêcher un second lancement concurrent (_orchestratorUiRunning, en plus du verrou _calcJob déjà
+    // vérifié par l'orchestrateur lui-même), transmettre le résultat compact déjà retourné à ValueTestUI
+    // pour affichage, et gérer les toasts de succès/erreur. AUCUN calcul, AUCUNE probabilité, AUCUNE
+    // sélection, AUCUN second chemin vers BacktestCore.runValueTest : le SEUL appel moteur est
+    // this.runValueTestAllChampionships(...) ci-dessus, déjà validé par ses tests ciblés.
+    // ============================================================
+    _orchestratorUiRunning: false,
+    async handleValueTestAllChampionshipsClick() {
+        if (this._orchestratorUiRunning) { showToast('⏳ TEST VALUE (tous les championnats) est déjà en cours.', 'alert'); return; }
+        if (this._calcJob || (typeof globalThis !== 'undefined' && globalThis.calibrationRunning)) { showToast(`⏳ ${ManualCalcGate.busyMessage(this._calcJob) || 'Un calcul est déjà en cours.'}`, 'alert'); return; }
+        const seedInput = (typeof ValueTestUI !== 'undefined' && typeof ValueTestUI.getOrchestratorSeed === 'function') ? ValueTestUI.getOrchestratorSeed() : 'default';
+        this._orchestratorUiRunning = true;
+        try { if (typeof ValueTestUI !== 'undefined' && ValueTestUI.startOrchestratorRun) ValueTestUI.startOrchestratorRun(); } catch (_) { /* affichage seul */ }
+        try {
+            const result = await this.runValueTestAllChampionships({ seed: seedInput });
+            try { if (typeof ValueTestUI !== 'undefined' && ValueTestUI.finishOrchestratorRun) ValueTestUI.finishOrchestratorRun(result, null); } catch (_) { /* affichage seul */ }
+            const errCount = Array.isArray(result.errors) ? result.errors.length : 0;
+            showToast(errCount
+                ? `✅ TEST VALUE terminé — ${result.championshipsCount} championnat(s) — ⚠️ ${errCount} erreur(s)`
+                : `✅ TEST VALUE terminé — ${result.championshipsCount} championnat(s)`, errCount ? 'alert' : 'success');
+        } catch (error) {
+            const msg = this._calcErrorLabel(error);
+            try { if (typeof ValueTestUI !== 'undefined' && ValueTestUI.finishOrchestratorRun) ValueTestUI.finishOrchestratorRun(null, msg); } catch (_) { /* affichage seul */ }
+            showToast(`❌ TEST VALUE (tous les championnats) : ${msg}`, 'error');
+        } finally {
+            this._orchestratorUiRunning = false;
+        }
+    },
+    // ============================================================
+    // FIN AJOUT ADDITIF — ORCHESTRATEUR GLOBAL TEST VALUE
+    // ============================================================
 
 
     // --- Performance et backtest (CORRIGÉ avec barre de progression et sans look‑ahead) ---  
@@ -26486,11 +27259,17 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
             return { applied: true, postCommitReconciliationRequired: postCommitErrors.length > 0, postCommitErrors };
         };
         const authority = await attempt('reload_authority', async () => {
-            const [matches, teams, addedMatches, trackingData, analysedMatches, coupon, results, marketResults, leagues, leagueAverages] = await Promise.all([
-                DB.getAllMatches(), DB.getAllTeams(), DB.getAllAddedMatches(), DB.getAllTracking(), DB.getAllAnalysedMatches(),
-                DB.getAllCoupon(), DB.getAllResults(), DB.getAllMarketResults(), DB.getAllLeagues(), DB.getAllLeagueAverages()
+            // increment69 — results n'est plus rechargé intégralement en RAM ici :
+            // seul le compteur (DB.countResults) est repris ; render_current_page
+            // (plus bas) relit ensuite Results directement depuis IndexedDB si besoin.
+            // increment69B — même principe pour Tracking : App.trackingData est
+            // supprimé, render_current_page (page 'tracking') relit IndexedDB
+            // directement (filtré/paginé/streaming) pour l'affichage et les stats.
+            const [matches, teams, addedMatches, analysedMatches, coupon, resultsCount, marketResults, leagues, leagueAverages] = await Promise.all([
+                DB.getAllMatches(), DB.getAllTeams(), DB.getAllAddedMatches(), DB.getAllAnalysedMatches(),
+                DB.getAllCoupon(), DB.countResults(), DB.getAllMarketResults(), DB.getAllLeagues(), DB.getAllLeagueAverages()
             ]);
-            Object.assign(this, { matches, teams, addedMatches, trackingData, analysedMatches, coupon, results, marketResults, leagues, leagueAverages });
+            Object.assign(this, { matches, teams, addedMatches, analysedMatches, coupon, resultsCount, marketResults, leagues, leagueAverages });
         });
         if (!authority.ok) return await notify();
         const capital = await attempt('restore_capital_memory', async () => {
@@ -26652,9 +27431,40 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
     resetMapping() { this._manualMapping = { country:'', season:'', leagueColumn:'', countryColumn:'' }; document.getElementById('mapCountry').value=''; document.getElementById('mapSeason').value=''; document.getElementById('mapLeagueColumn').value=''; document.getElementById('mapCountryColumn').value=''; this.previewData(); },  
   
     // --- Dashboard et graphiques ---  
-    renderDashboard() {  
+    // increment69B — SUPPRESSION de la dépendance à App.trackingData : synthèse
+    // financière (totaux) + P/L par championnat calculés en UN SEUL passage streaming
+    // (curseur IndexedDB), via aggregateStream + hook onSafeSettled ; "5 derniers paris"
+    // obtenus via DB.getLastTrackingEntries (curseur 'prev', mémoire bornée à 5). Plus
+    // aucun tableau contenant tout l'historique construit ici.
+    async renderDashboard() {  
         const stats = document.getElementById('dashboardStats');  
-        const financial = TrackingFinancialMetrics.aggregate(this.trackingData, this.getEffectiveInitialBankroll());
+        const leagueForSafeEntry = entry => {
+            const clean = value => typeof value === 'string' && value.normalize('NFKC').trim() ? value.normalize('NFKC').trim() : null;
+            if (entry.type === 'coupon' && Array.isArray(entry.selections)) {
+                const unique = new Map();
+                for (const selection of entry.selections) {
+                    const league = clean(selection.league);
+                    if (!league) continue;
+                    const identity = league.toLocaleLowerCase('fr-FR');
+                    if (!unique.has(identity) || league.localeCompare(unique.get(identity), 'fr-FR') < 0) unique.set(identity, league);
+                }
+                const leagues = [...unique.values()].sort((left, right) => left.localeCompare(right, 'fr-FR'));
+                if (leagues.length === 1) return leagues[0];
+                // Un coupon multi-ligues reste une seule opération : son profit n'est ni ventilé ni dupliqué.
+                if (leagues.length > 1) return `Multi-ligues · ${leagues.join(' / ')}`;
+            }
+            return clean(entry.league) || 'Inconnu';
+        };
+        const leaguePerf = new Map();
+        const financial = await TrackingFinancialMetrics.aggregateStream(onRow => DB.streamStore('tracking', { onRow }), this.getEffectiveInitialBankroll(), {
+            onSafeSettled: (entry, stake, profit) => {
+                const league = leagueForSafeEntry(entry);
+                const data = leaguePerf.get(league) || { profit: 0, count: 0 };
+                data.profit += profit;
+                data.count++;
+                leaguePerf.set(league, data);
+            }
+        });
         const totalBets = financial.settledFinancialBets, wonBets = financial.wins, profit = financial.totalProfit;
         const yieldLabel = TrackingFinancialMetrics.formatPercentPointsFr(financial.yield);
         const capitalRoiLabel = TrackingFinancialMetrics.formatPercentPointsFr(financial.capitalRoi);
@@ -26688,7 +27498,7 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
         }  
   
         const recentContainer = document.getElementById('dashboardRecentBets');  
-        const recentBets = financial.safeEntries.slice(-5).reverse();
+        const recentBets = await DB.getLastTrackingEntries(5);
         if (recentBets.length > 0) {  
             recentContainer.innerHTML = recentBets.map(b => {
                 const displayProfit = typeof b.totalProfit === 'number' && Number.isFinite(b.totalProfit)
@@ -26705,31 +27515,6 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
         }  
   
         const perfContainer = document.getElementById('dashboardLeaguePerformance');  
-        const leaguePerf = new Map();
-        const leagueForSafeEntry = entry => {
-            const clean = value => typeof value === 'string' && value.normalize('NFKC').trim() ? value.normalize('NFKC').trim() : null;
-            if (entry.type === 'coupon' && Array.isArray(entry.selections)) {
-                const unique = new Map();
-                for (const selection of entry.selections) {
-                    const league = clean(selection.league);
-                    if (!league) continue;
-                    const identity = league.toLocaleLowerCase('fr-FR');
-                    if (!unique.has(identity) || league.localeCompare(unique.get(identity), 'fr-FR') < 0) unique.set(identity, league);
-                }
-                const leagues = [...unique.values()].sort((left, right) => left.localeCompare(right, 'fr-FR'));
-                if (leagues.length === 1) return leagues[0];
-                // Un coupon multi-ligues reste une seule opération : son profit n'est ni ventilé ni dupliqué.
-                if (leagues.length > 1) return `Multi-ligues · ${leagues.join(' / ')}`;
-            }
-            return clean(entry.league) || 'Inconnu';
-        };
-        for (const settled of financial.safeSettledEntries) {
-            const league = leagueForSafeEntry(settled.entry);
-            const data = leaguePerf.get(league) || { profit: 0, count: 0 };
-            data.profit += settled.profit;
-            data.count++;
-            leaguePerf.set(league, data);
-        }
         const topLeagues = [...leaguePerf.entries()].sort((a, b) => b[1].profit - a[1].profit).slice(0, 5);
         if (topLeagues.length > 0) {  
             perfContainer.innerHTML = topLeagues.map(([league, data]) =>  
@@ -26787,13 +27572,22 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
   
     // --- Export / divers ---  
     _download(name, content, type = 'application/json') { const blob = new Blob([content], {type:`${type};charset=utf-8`}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(url),0); },  
-    exportTrackingCSV() {  
+    // increment69B — export CSV en streaming (curseur IndexedDB) : les lignes sont
+    // accumulées dans un tableau LOCAL le temps de la génération du fichier (action
+    // ponctuelle déclenchée par l'utilisateur, tableau jamais conservé ensuite), plus
+    // aucune lecture de App.trackingData (supprimé).
+    async exportTrackingCSV() {  
         const esc=v=>`"${String(v??'').replace(/"/g,'""').replace(/^[=+\-@]/,'\t$&')}"`;  
         const rows=[['Date','Type','Match','Ligue','Cote','Mise','Résultat','Profit']];  
-        for(const b of this.trackingData) rows.push([b.date,b.type||'single',b.type==='coupon'?(b.selections||[]).map(s=>`${s.homeTeam} vs ${s.awayTeam}`).join(' | '):`${b.homeTeam||''} vs ${b.awayTeam||''}`,b.league||'',b.totalOdds||b.odds||'',b.totalStake||b.stake||0,b.result||'pending',b.totalProfit||b.profit||0]);  
+        await DB.streamStore('tracking', { onRow: b => { rows.push([b.date,b.type||'single',b.type==='coupon'?(b.selections||[]).map(s=>`${s.homeTeam} vs ${s.awayTeam}`).join(' | '):`${b.homeTeam||''} vs ${b.awayTeam||''}`,b.league||'',b.totalOdds||b.odds||'',b.totalStake||b.stake||0,b.result||'pending',b.totalProfit||b.profit||0]); } });
         this._download(`tracking_${Utils.getDefaultDate()}.csv`,rows.map(r=>r.map(esc).join(';')).join('\n'),'text/csv');  
     },  
-    exportTrackingJSON() { this._download(`tracking_${Utils.getDefaultDate()}.json`,JSON.stringify(this.trackingData,null,2)); },  
+    // increment69B — idem pour l'export JSON.
+    async exportTrackingJSON() {
+        const rows = [];
+        await DB.streamStore('tracking', { onRow: b => { rows.push(b); } });
+        this._download(`tracking_${Utils.getDefaultDate()}.json`,JSON.stringify(rows,null,2));
+    },
     importTrackingFile() {  
         const input=document.createElement('input'); input.type='file'; input.accept='.json'; input.onchange=async()=>{try{const rows=JSON.parse(await input.files[0].text()); if(!Array.isArray(rows)) throw new Error('Format attendu: tableau'); for(const row of rows) await DB.saveTracking(row); await this.refreshAllData(); showToast(`${rows.length} entrées de suivi importées`,'success');}catch(e){showToast('Import suivi impossible: '+e.message,'error');}}; input.click();  
     },  
@@ -26808,7 +27602,7 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
     async deleteAllData() {  
         if(!confirm('Supprimer définitivement toutes les données RED PRO AI de cet appareil ?')) return;  
         if(!confirm('Dernière confirmation : avez-vous exporté une sauvegarde ?')) return;  
-        await DB.deleteAllData(); this.teams=[];this.matches=[];this.trackingData=[];this.analysedMatches=[];this.coupon=[];this.results=[];this.leagues=[];this.leagueAverages=[];this.bankroll=0;this.initialBankroll=null;this.capitalHistory=[];this.analysisHistory=[]; localStorage.removeItem('rp_history');localStorage.removeItem('rp_capital_history');localStorage.removeItem('rp_bankroll');localStorage.removeItem('rp_initial_bankroll'); await this.refreshAllData(); showToast('Toutes les données ont été supprimées','info');  
+        await DB.deleteAllData(); this.teams=[];this.matches=[];this.analysedMatches=[];this.coupon=[];this.resultsCount=0;this.leagues=[];this.leagueAverages=[];this.bankroll=0;this.initialBankroll=null;this.capitalHistory=[];this.analysisHistory=[]; localStorage.removeItem('rp_history');localStorage.removeItem('rp_capital_history');localStorage.removeItem('rp_bankroll');localStorage.removeItem('rp_initial_bankroll'); await this.refreshAllData(); showToast('Toutes les données ont été supprimées','info');  
     },  
     async runAutoCalibration() {  
         try { const entries=await DB.getAllStore('globalCalibration'); for(const entry of entries) if(String(entry.key||'').startsWith(ModelPerformanceEngine.cachePrefix)) await DB.deleteStoreKey('globalCalibration',entry.key); const leagues=[...new Set(this.matches.map(m=>m.league||m.div).filter(Boolean))]; for(const league of leagues) await ModelPerformanceEngine.computeWeights(league,'1X2'); showToast(`${leagues.length} ligue(s) calibrée(s)`,'success'); if(this._lastAnalysisResult) await this.runAnalysis(); } catch(e){showToast('Calibration impossible: '+e.message,'error');}
@@ -26865,8 +27659,19 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
     },  
     async addTeam() { const name=prompt("Nom de l'équipe :");if(!name?.trim())return;if(await DB.getTeam(name.trim())){showToast('Cette équipe existe déjà','alert');return;}await DB.saveTeam({name:name.trim(),elo:1500,xG:1,xGA:1,matches:0,goalsScored:0,goalsConceded:0,formLast5:[],seasons:{},stats:{xG:1,xGA:1}});this.teams=await DB.getAllTeams();this.renderTeams();showToast('Équipe ajoutée','success'); },  
     async deleteTeam(name) {  
-        const referenced = this.matches.some(m => m.homeTeam === name || m.awayTeam === name)  
-            || this.trackingData.some(b => b.homeTeam === name || b.awayTeam === name || b.selections?.some(s => s.homeTeam === name || s.awayTeam === name));  
+        // increment69B — vérification par curseur IndexedDB avec arrêt anticipé (DB.streamStore
+        // renvoie `true` depuis onRow dès la première référence trouvée), plus de dépendance à
+        // App.trackingData : mémoire bornée, jamais tout l'historique chargé pour ce contrôle.
+        const referencedInMatches = this.matches.some(m => m.homeTeam === name || m.awayTeam === name);
+        let referencedInTracking = false;
+        if (!referencedInMatches) {
+            const check = await DB.streamStore('tracking', {
+                predicate: b => b.homeTeam === name || b.awayTeam === name || b.selections?.some(s => s.homeTeam === name || s.awayTeam === name),
+                onRow: () => true
+            });
+            referencedInTracking = check.stopped;
+        }
+        const referenced = referencedInMatches || referencedInTracking;  
         if (referenced) { showToast('Suppression refusée : cette équipe est encore référencée par des matchs ou paris', 'error'); return; }  
         if (!confirm(`Supprimer ${name} ?`)) return;  
         await DB.deleteTeam(name);  
@@ -27003,6 +27808,326 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
         }
     }
 };
+
+// increment68 — AJOUT ADDITIF (Suivi/Résultats : filtre période+championnat, générateur de
+// prompt partagé, export mémoire-safe). Rien ci-dessous ne modifie CALCULS/Analyse/TEST
+// VALUE/Kelly/Capital/LIVE/la logique de règlement (settleBetAtomic, _deriveCouponSettlement,
+// _couponResultRows) ni App.generatePrompt()/copyPrompt() (Analyse), qui restent strictement
+// inchangés. Tout ce bloc est en lecture seule : aucune écriture DB.
+
+// --- Filtre date/championnat partagé (Suivi + Résultats) --------------------------------
+// Normalisation vers le format canonique interne YYYY-MM-DD (Utils.parseCanonicalDate,
+// déjà utilisé pour les dates de match partout ailleurs dans le fichier — §16 : pas de
+// second système de dates, pas de comparaison fragile de chaînes de formats différents).
+const PeriodFilter = {
+    normalizeRange(dateFrom, dateTo) {
+        const from = dateFrom ? Utils.parseCanonicalDate(dateFrom) : null;
+        const to = dateTo ? Utils.parseCanonicalDate(dateTo) : null;
+        return { from: from || null, to: to || null };
+    },
+    // true si `rawDate` (n'importe quel format déjà accepté par parseCanonicalDate,
+    // y compris un horodatage ISO complet) tombe dans l'intervalle inclusif [from, to].
+    // Une date absente/invalide est exclue dès qu'un filtre de date est actif (jamais
+    // comptée par défaut dans une période choisie), mais reste incluse quand aucun
+    // filtre n'est actif (comportement "Tout" par défaut).
+    matchesDate(rawDate, from, to) {
+        if (!from && !to) return true;
+        const canonical = typeof rawDate === 'string' ? Utils.parseCanonicalDate(rawDate) : null;
+        if (!canonical) return false;
+        if (from && canonical < from) return false;
+        if (to && canonical > to) return false;
+        return true;
+    },
+    matchesLeague(league, filterLeague) {
+        if (!filterLeague) return true;
+        return Utils.normalizeLeagueIdentity(league) === Utils.normalizeLeagueIdentity(filterLeague);
+    }
+};
+
+// --- Agrégateur Suivi (streaming, mémoire-safe) ------------------------------------------
+// Complexité mémoire visée : O(nombre de championnats/marchés distincts), jamais
+// O(nombre total de coupons/sélections) — voir accumulateEntry/finalize ci-dessous, qui ne
+// conservent que des compteurs et deux Map bornées par le nombre de catégories réelles,
+// jamais un tableau des lignes traitées. `run()` lit via DB.streamStore('tracking', ...),
+// un curseur IndexedDB : chaque entrée est visitée une fois puis libérée.
+const TrackingAggregator = {
+    emptyAggregate() {
+        return {
+            totalCoupons: 0, totalPending: 0, totalSelections: 0,
+            wins: 0, losses: 0, pushes: 0, partialWins: 0, halfWins: 0, halfLosses: 0,
+            pnl: 0, stake: 0,
+            byLeague: new Map(), byMarket: new Map()
+        };
+    },
+    _bucket(map, key) {
+        const k = key || 'Inconnu';
+        if (!map.has(k)) map.set(k, { coupons: 0, selections: 0, wins: 0, losses: 0, pushes: 0, partialWins: 0, halfWins: 0, halfLosses: 0, pnl: 0, stake: 0 });
+        return map.get(k);
+    },
+    _outcomeField(result) {
+        return result === 'win' ? 'wins' : result === 'loss' ? 'losses' : result === 'push' ? 'pushes'
+            : result === 'partial_win' ? 'partialWins' : result === 'half_win' ? 'halfWins'
+            : result === 'half_loss' ? 'halfLosses' : null;
+    },
+    // Une seule entrée tracking (type 'single' OU 'coupon', déjà filtrée par le
+    // prédicat période/championnat en amont) -> mise à jour de l'agrégat compact.
+    // §6/§7 : ne suppose JAMAIS qu'un coupon n'a qu'une sélection — chaque élément
+    // de entry.selections[] est compté individuellement dans totalSelections/byMarket.
+    accumulateEntry(agg, entry) {
+        if (!entry || typeof entry !== 'object') return;
+        if (entry.status !== 'settled') { agg.totalPending++; return; }
+        const isCoupon = entry.type === 'coupon';
+        const selections = isCoupon && Array.isArray(entry.selections) ? entry.selections : [{
+            league: entry.league, market: entry.betType, key: entry.key, result: entry.result
+        }];
+        const stake = isCoupon ? Utils.safeNumber(entry.fundedStake, 0) : Utils.safeNumber(entry.stake, 0);
+        const pnl = isCoupon ? Utils.safeNumber(entry.totalProfit, 0) : Utils.safeNumber(entry.profit, 0);
+        // Un coupon multi-sélections peut mélanger plusieurs championnats : on ne
+        // rattache le P/L et la mise (comptés une seule fois par coupon, jamais par
+        // sélection) à UN championnat que si toutes les jambes en partagent un seul ;
+        // sinon on l'isole sous "Multi-championnats" pour ne jamais fausser/dupliquer
+        // le P/L d'un championnat avec l'argent d'un autre.
+        const leagueSet = isCoupon ? new Set(selections.map(s => s?.league || 'Inconnu')) : null;
+        const couponLeague = isCoupon ? (leagueSet.size === 1 ? [...leagueSet][0] : 'Multi-championnats') : (entry.league || 'Inconnu');
+        agg.totalCoupons++;
+        agg.totalSelections += selections.length;
+        agg.pnl += pnl; agg.stake += stake;
+        const field = this._outcomeField(entry.result);
+        if (field) agg[field]++;
+        const leagueBucket = this._bucket(agg.byLeague, couponLeague);
+        leagueBucket.coupons++; leagueBucket.selections += selections.length;
+        leagueBucket.pnl += pnl; leagueBucket.stake += stake;
+        if (field) leagueBucket[field]++;
+        for (const selection of selections) {
+            const marketKey = selection?.key || Utils.cleanMarket(selection?.market || '') || 'Inconnu';
+            const marketBucket = this._bucket(agg.byMarket, marketKey);
+            marketBucket.selections++;
+            const selField = this._outcomeField(selection?.result) || field;
+            if (selField) marketBucket[selField]++;
+        }
+    },
+    finalize(agg, context = {}) {
+        const rate = (num, den) => den > 0 ? num / den : null;
+        const toRows = map => [...map.entries()]
+            .map(([key, value]) => ({ key, ...value, winRate: rate(value.wins + value.partialWins + value.halfWins, value.coupons || value.selections), yield: value.stake > 0 ? value.pnl / value.stake : null }))
+            .sort((a, b) => b.selections - a.selections || b.coupons - a.coupons);
+        return {
+            dateFrom: context.dateFrom || null, dateTo: context.dateTo || null, league: context.league || null,
+            totalCoupons: agg.totalCoupons, totalPending: agg.totalPending, totalSelections: agg.totalSelections,
+            wins: agg.wins, losses: agg.losses, pushes: agg.pushes, partialWins: agg.partialWins,
+            halfWins: agg.halfWins, halfLosses: agg.halfLosses,
+            pnl: agg.pnl, stake: agg.stake,
+            winRate: rate(agg.wins + agg.partialWins + agg.halfWins, agg.totalCoupons),
+            yield: agg.stake > 0 ? agg.pnl / agg.stake : null,
+            byLeague: toRows(agg.byLeague), byMarket: toRows(agg.byMarket)
+        };
+    },
+    // Point d'entrée réel (APK) : curseur IndexedDB sur 'tracking', jamais de
+    // `getAllTracking()`. Utilisable indépendamment de App.trackingData.
+    async run(filter = {}) {
+        const { from, to } = PeriodFilter.normalizeRange(filter.dateFrom, filter.dateTo);
+        const agg = this.emptyAggregate();
+        await DB.streamStore('tracking', {
+            predicate: entry => PeriodFilter.matchesDate(entry.date, from, to) && (
+                filter.league ? (entry.type === 'coupon'
+                    ? (entry.selections || []).some(s => PeriodFilter.matchesLeague(s.league, filter.league))
+                    : PeriodFilter.matchesLeague(entry.league, filter.league))
+                : true
+            ),
+            onRow: entry => this.accumulateEntry(agg, entry)
+        });
+        return this.finalize(agg, { dateFrom: from, dateTo: to, league: filter.league || null });
+    }
+};
+
+// --- Générateur de prompt partagé ---------------------------------------------------------
+// SharedPromptGenerator : point de LIVRAISON commun (même page "Prompts", même textarea
+// #promptOutput, même bouton App.copyPrompt()) pour Analyse ET Suivi — aucune seconde page,
+// aucun second mécanisme de copie. App.generatePrompt() (Analyse, match unique) reste
+// strictement intact et continue d'écrire dans #promptOutput exactement comme avant
+// (increment66/antérieur) ; buildTrackingPrompt() ci-dessous est le pendant pour Suivi
+// (statistiques agrégées, jamais une analyse de match). Les deux domaines de données étant
+// fondamentalement différents (un match précis vs. un historique de résultats agrégés), le
+// texte du prompt n'est pas partagé mot pour mot — seule l'infrastructure de livraison
+// (PromptGenerator.deliver) et la discipline de contenu (uniquement des valeurs qui
+// proviennent réellement de l'agrégat, jamais inventées) sont communes, comme demandé au §2.
+const PromptGenerator = {
+    deliver(promptText) {
+        const output = document.getElementById('promptOutput');
+        if (!output) return;
+        output.value = promptText;
+        showToast('✅ Prompt généré', 'success');
+        App.navigateTo('prompts');
+    },
+    formatPct(value) { return value === null || value === undefined ? 'N/D' : TrackingFinancialMetrics.formatRatioPercentFr(value); },
+    formatPnl(value) { return `${value >= 0 ? '+' : ''}${value.toFixed(0)} CDF`; },
+    buildTrackingPrompt(stats, options = {}) {
+        const period = stats.dateFrom || stats.dateTo
+            ? `Du ${stats.dateFrom || '(non bornée)'} au ${stats.dateTo || '(non bornée)'}`
+            : 'Historique complet (aucun filtre de date)';
+        const championship = stats.league || 'Tous championnats confondus';
+        const leagueLines = stats.byLeague.map(r => `- ${r.key} : ${r.coupons} coupon(s), ${r.selections} sélection(s), P/L ${this.formatPnl(r.pnl)}, rendement ${this.formatPct(r.yield)}`).join('\n') || '(aucune donnée)';
+        const marketLines = stats.byMarket.map(r => `- ${r.key} : ${r.selections} sélection(s), gagnées ${r.wins}, perdues ${r.losses}, push ${r.pushes}`).join('\n') || '(aucune donnée)';
+        return `Tu es l’analyste de performance externe de RED DATA (onglet Suivi).
+
+Les statistiques ci-dessous proviennent exclusivement de l’agrégateur RED DATA (calcul en
+streaming sur l’historique réel des paris réglés). N’invente aucune statistique absente de
+cette liste ; si une donnée manque, indique-le explicitement.
+
+=== PÉRIODE ANALYSÉE ===
+${period}
+Championnat(s) : ${championship}
+
+=== SYNTHÈSE ===
+Coupons réglés : ${stats.totalCoupons} (dont en attente hors période : ${stats.totalPending})
+Sélections : ${stats.totalSelections}
+Gagnés : ${stats.wins} | Perdus : ${stats.losses} | Push/remboursés : ${stats.pushes}
+Gains partiels : ${stats.partialWins} | Demi-gains (AH) : ${stats.halfWins} | Demi-pertes (AH) : ${stats.halfLosses}
+Taux de réussite (coupons) : ${this.formatPct(stats.winRate)}
+Mise totale réglée : ${stats.stake.toFixed(0)} CDF
+P/L : ${this.formatPnl(stats.pnl)}
+Rendement : ${this.formatPct(stats.yield)}
+
+=== PAR CHAMPIONNAT ===
+${leagueLines}
+
+=== PAR MARCHÉ ===
+${marketLines}
+
+Analyse cette performance : identifie les championnats/marchés les plus rentables et les
+moins rentables sur cette période, et les tendances éventuelles. Ne modifie et n’invente
+aucun chiffre : appuie-toi uniquement sur les valeurs fournies ci-dessus.`;
+    }
+};
+
+Object.assign(App, {
+    // état des filtres — état d'affichage uniquement, jamais un cache de l'historique
+    trackingStatsFilter: { dateFrom: null, dateTo: null, league: null },
+    resultsFilter: { dateFrom: null, dateTo: null, league: null },
+    resultsPage: 0,
+    resultsPageSize: 50,
+    // increment69B — pagination Tracking, même principe que resultsPage/resultsPageSize
+    // (increment68) : App.renderTracking pagine désormais la liste par id via IndexedDB.
+    trackingPage: 0,
+    trackingPageSize: 50,
+    _lastTrackingStats: null,
+
+    // --- Suivi : filtre + statistiques + prompt ---
+    populateStatsLeagueSelectors() {
+        const names = [...new Set((this.leagues || []).map(l => l.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+        for (const id of ['trackingStatsLeague', 'resultsLeagueFilter']) {
+            const select = document.getElementById(id);
+            if (!select) continue;
+            const current = select.value;
+            select.innerHTML = '<option value="">Tous les championnats</option>' + names.map(n => `<option value="${Utils.escapeHTML(n)}">${Utils.escapeHTML(n)}</option>`).join('');
+            if (names.includes(current)) select.value = current;
+        }
+    },
+    setTrackingStatsRange(from, to) {
+        if (from !== null) this.trackingStatsFilter.dateFrom = from || null;
+        if (to !== null) this.trackingStatsFilter.dateTo = to || null;
+        this.refreshTrackingStats();
+    },
+    setTrackingStatsLeague(league) { this.trackingStatsFilter.league = league || null; this.refreshTrackingStats(); },
+    resetTrackingStatsFilter() {
+        this.trackingStatsFilter = { dateFrom: null, dateTo: null, league: null };
+        const from = document.getElementById('trackingStatsDateFrom'), to = document.getElementById('trackingStatsDateTo'), lg = document.getElementById('trackingStatsLeague');
+        if (from) from.value = ''; if (to) to.value = ''; if (lg) lg.value = '';
+        this.refreshTrackingStats();
+    },
+    async refreshTrackingStats() {
+        const panel = document.getElementById('trackingStatsPanel');
+        if (panel) panel.innerHTML = 'Calcul en cours...';
+        const stats = await TrackingAggregator.run(this.trackingStatsFilter);
+        this._lastTrackingStats = stats;
+        this.renderTrackingStatsPanel(stats);
+        return stats;
+    },
+    renderTrackingStatsPanel(stats) {
+        const panel = document.getElementById('trackingStatsPanel');
+        if (!panel) return;
+        if (stats.totalCoupons === 0) { panel.innerHTML = 'Aucun coupon réglé sur cette période.'; return; }
+        panel.innerHTML = `<div class="grid-4 text-center" style="gap:6px;">
+            <div><div class="text-sub fs-06">Coupons</div><div class="fw-700 text-cyan">${stats.totalCoupons}</div></div>
+            <div><div class="text-sub fs-06">Sélections</div><div class="fw-700 text-cyan">${stats.totalSelections}</div></div>
+            <div><div class="text-sub fs-06">Taux de réussite</div><div class="fw-700 text-gold">${PromptGenerator.formatPct(stats.winRate)}</div></div>
+            <div><div class="text-sub fs-06">Rendement</div><div class="fw-700 text-gold">${PromptGenerator.formatPct(stats.yield)}</div></div>
+            <div><div class="text-sub fs-06">P/L</div><div class="fw-700" style="color:${stats.pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${PromptGenerator.formatPnl(stats.pnl)}</div></div>
+            <div><div class="text-sub fs-06">Gagnés</div><div class="fw-700 text-green">${stats.wins}</div></div>
+            <div><div class="text-sub fs-06">Perdus</div><div class="fw-700 text-red">${stats.losses}</div></div>
+            <div><div class="text-sub fs-06">Push</div><div class="fw-700 text-gold">${stats.pushes}</div></div>
+        </div>`;
+    },
+    async generateTrackingPrompt() {
+        const stats = await this.refreshTrackingStats();
+        if (stats.totalCoupons === 0) { showToast('Aucun coupon réglé sur cette période — impossible de générer un prompt', 'error'); return; }
+        PromptGenerator.deliver(PromptGenerator.buildTrackingPrompt(stats, this.trackingStatsFilter));
+    },
+
+    // --- Résultats : filtre + pagination + export mémoire-safe ---
+    setResultsRange(from, to) {
+        if (from !== null) this.resultsFilter.dateFrom = from || null;
+        if (to !== null) this.resultsFilter.dateTo = to || null;
+        this.resultsPage = 0;
+        this.renderResults();
+    },
+    setResultsLeague(league) { this.resultsFilter.league = league || null; this.resultsPage = 0; this.renderResults(); },
+    resetResultsFilter() {
+        this.resultsFilter = { dateFrom: null, dateTo: null, league: null };
+        this.resultsPage = 0;
+        const from = document.getElementById('resultsDateFrom'), to = document.getElementById('resultsDateTo'), lg = document.getElementById('resultsLeagueFilter');
+        if (from) from.value = ''; if (to) to.value = ''; if (lg) lg.value = '';
+        this.renderResults();
+    },
+    _resultsFilterPredicate() {
+        const { from, to } = PeriodFilter.normalizeRange(this.resultsFilter.dateFrom, this.resultsFilter.dateTo);
+        const league = this.resultsFilter.league;
+        return r => PeriodFilter.matchesDate(r.date, from, to) && PeriodFilter.matchesLeague(r.league, league);
+    },
+    resultsPrevPage() { if (this.resultsPage > 0) { this.resultsPage--; this.renderResults(); } },
+    resultsNextPage() { this.resultsPage++; this.renderResults(); },
+    // increment69B — pagination Tracking, même principe que resultsPrevPage/resultsNextPage.
+    trackingPrevPage() { if (this.trackingPage > 0) { this.trackingPage--; this.renderTracking(); } },
+    trackingNextPage() { this.trackingPage++; this.renderTracking(); },
+
+    // --- Export Résultats : lecture par curseur IndexedDB filtré, jamais this.results ---
+    // §14 : pas de double passage DB -> tableau A -> tableau B -> JSON/CSV -> Blob. Chaque
+    // ligne acceptée par le filtre est directement convertie en fragment texte et concaténée.
+    async exportResultsCSV() {
+        const predicate = this._resultsFilterPredicate();
+        const csvCell = value => {
+            const text = value === null || value === undefined ? '' : String(value);
+            return /[;,"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+        };
+        let csv = 'Date;Match;Ligue;Score;Marché;Clé;Résultat;Mise;Profit;Modèle;Spécial\n';
+        let count = 0;
+        await DB.streamStore('results', { predicate, onRow: r => {
+            count++;
+            const match = `${r.homeTeam} vs ${r.awayTeam}`;
+            const score = Number.isFinite(r.hg) && Number.isFinite(r.ag) ? `${r.hg}-${r.ag}` : 'Score non renseigné';
+            const stake = typeof r.stake === 'number' && Number.isFinite(r.stake) ? r.stake : '';
+            const profit = typeof r.profit === 'number' && Number.isFinite(r.profit) ? r.profit : '';
+            csv += [r.date, match, r.league || 'Inconnu', score, r.market || '', r.key || '', r.result, stake, profit, r.model || '', r.special ? 'Oui' : 'Non']
+                .map(csvCell).join(';') + '\n';
+        } });
+        if (count === 0) { showToast('Aucun résultat pour ce filtre', 'error'); return; }
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `results_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url);
+        showToast(`Export CSV terminé (${count} résultat(s))`, 'success');
+    },
+    async exportResultsJSON() {
+        const predicate = this._resultsFilterPredicate();
+        const rows = [];
+        await DB.streamStore('results', { predicate, onRow: r => { const { id, ...clean } = r; rows.push(clean); } });
+        if (rows.length === 0) { showToast('Aucun résultat pour ce filtre', 'error'); return; }
+        const payload = { exportedAt: new Date().toISOString(), filter: { ...this.resultsFilter }, count: rows.length, results: rows };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `results_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url);
+        showToast(`Export JSON terminé (${rows.length} résultat(s))`, 'success');
+    }
+});
 
 // Référence lexicale privée utilisée par DB : remplacer la méthode publique App
 // après l'initialisation ne peut pas modifier la reconstruction transactionnelle.
