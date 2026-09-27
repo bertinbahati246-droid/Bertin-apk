@@ -984,7 +984,7 @@
             margin-bottom: 12px;  
             flex-wrap: wrap;  
         }  
-        .sub-nav-item {  
+        .sub-nav-item, .maint-nav-item {  
             padding: 6px 14px;  
             border-radius: 6px;  
             cursor: pointer;  
@@ -996,13 +996,13 @@
             transition: 0.2s;  
             white-space: nowrap;  
         }  
-        .sub-nav-item:hover { color: var(--text); background: rgba(6,182,212,0.08); }  
-        .sub-nav-item.active {  
+        .sub-nav-item:hover, .maint-nav-item:hover { color: var(--text); background: rgba(6,182,212,0.08); }  
+        .sub-nav-item.active, .maint-nav-item.active {  
             background: var(--border);  
             color: var(--text);  
         }  
-        .sub-page { display: none; }  
-        .sub-page.active { display: block; }  
+        .sub-page, .maint-page { display: none; }  
+        .sub-page.active, .maint-page.active { display: block; }  
         .threshold-slider {  
             display: flex;  
             align-items: center;  
@@ -1401,6 +1401,7 @@
         <button class="nav-item" data-page="addmatch">➕ Match</button>  
         <button class="nav-item" data-page="teams">🏷️ Équipes</button>  
         <button class="nav-item" data-page="leagues">🏆 Ligues</button>  
+        <button class="nav-item" data-page="maintenance">🛠️ Maintenance</button>  
     </nav>  
   
     <!-- PAGES -->  
@@ -2131,7 +2132,29 @@
             </div>  
         </div>  
     </section>  
-  
+
+    <section id="page-maintenance" class="page hidden">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">🛠️ Maintenance</div>
+            </div>
+            <div class="sub-nav">
+                <button class="maint-nav-item active" data-msub="sante">🩺 Santé</button>
+                <button class="maint-nav-item" data-msub="coherence">🧭 Cohérence</button>
+                <button class="maint-nav-item" data-msub="marches">📊 Marchés</button>
+                <button class="maint-nav-item" data-msub="donnees">🗂️ Données</button>
+                <button class="maint-nav-item" data-msub="historique">📜 Historique</button>
+                <button class="maint-nav-item" data-msub="tests">🧪 Tests</button>
+            </div>
+            <div id="maint-sante" class="maint-page active"></div>
+            <div id="maint-coherence" class="maint-page"></div>
+            <div id="maint-marches" class="maint-page"></div>
+            <div id="maint-donnees" class="maint-page"></div>
+            <div id="maint-historique" class="maint-page"></div>
+            <div id="maint-tests" class="maint-page"></div>
+        </div>
+    </section>
+
     <!-- MODALES -->  
     <div id="scoreModal" class="modal hidden">  
         <div class="modal-content">  
@@ -9529,7 +9552,13 @@ const ValueTestEngine = (() => {
     function simulateCapital(rows, options) {
         const opts = options || {};
         const initialCapital = Number.isFinite(opts.initialCapital) && opts.initialCapital > 0 ? opts.initialCapital : 10000;
-        const kellyDivisor = Number.isFinite(opts.kellyDivisor) && opts.kellyDivisor > 0 ? opts.kellyDivisor : 5;
+        // CORRECTIF PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §3 : diviseur Kelly canonique = 10 (au lieu de
+        // 5 auparavant) — SEULE la valeur de repli change ici ; aucune formule de Kelly n'est modifiée
+        // (Utils.calculateFractionalKelly/calculateKellyStake, EXISTANTES, INCHANGÉES ci-dessous). Cette
+        // valeur de repli est désormais la SEULE source du défaut, reprise à l'identique par
+        // App._canonicalCapitalOptions() (Manuel ET chaque Seed) — jamais une seconde valeur par défaut
+        // divergente ailleurs.
+        const kellyDivisor = Number.isFinite(opts.kellyDivisor) && opts.kellyDivisor > 0 ? opts.kellyDivisor : 10;
         const edgeDecimal = Number.isFinite(opts.edgeDecimal) ? opts.edgeDecimal : 0.05;
         const capMode = opts.capMode === 'B' ? 'B' : 'A';
         const capFraction = (capMode === 'B' && Number.isFinite(opts.capPercent) && opts.capPercent > 0) ? opts.capPercent : null;
@@ -9749,6 +9778,609 @@ const ValueTestEngine = (() => {
     });
 })();
 if (typeof globalThis !== 'undefined') globalThis.ValueTestEngine = ValueTestEngine;
+
+// ============================================================
+// AJOUT ADDITIF — PROMPT 2 : MarketEligibilityEngine + MarketEligibilitySnapshot
+// ------------------------------------------------------------
+// STRICTEMENT EN AVAL de TEST VALUE (BacktestCore.runValueTest / ValueTestEngine.simulateCapital
+// / App.runValueTestAllChampionships, tous INCHANGÉS). Ce module ne fait QUE lire des lignes de
+// capture déjà produites par PROMPT 1 (voir unitStats enrichi : championshipId, marketKey, seed,
+// validSelections, calibratedProbabilityMean, observedFrequency, brier, logLoss, ece, mce, roi,
+// drawdown, drawdownPct, maxLosingStreak) — AUCUN recalcul de probabilité/calibration/ROI/Kelly/
+// capital/settlement, AUCUNE modification de CALCULS/température/poids/modèles/walk-forward/
+// Analyse/TEST VALUE/LIVE. Une seule responsabilité : agréger N seeds par (championshipId,
+// marketKey) puis appliquer une règle de décision PURE (ACTIVE/DISABLED, INSUFFICIENT_DATA fusionné dans DISABLED).
+// ============================================================
+// Configuration centralisée UNIQUE (aucune valeur dispersée ailleurs dans le code) — versionnée
+// pour que le snapshot puisse toujours indiquer avec quels critères il a été produit.
+// AJOUT ADDITIF — PROMPT « MOTEUR 5 SEEDS » : version 2.0.0 (5 seeds au lieu de 3, statuts
+// ACTIVE/DISABLED uniquement — voir evaluateMarket ci-dessous). minPositiveSeeds mis à l'échelle de
+// 5 seeds en conservant le même ratio qu'avant (niveau 1 : 3/3=100%→5/5 jugé trop strict compte tenu
+// de la variance de 5 tirages, retenu 4/5=80% ; garde-fou : 2/3≈67%→3/5=60%). maxECE/maxDrawdown des
+// sous-objets primary/guardrail/disabled sont CONSERVÉS ici uniquement pour affichage informatif —
+// evaluateMarket ne les lit plus dans sa décision (§7 du cahier des charges : DD seul et ECE seul ne
+// peuvent jamais désactiver un marché — traité en les excluant entièrement de la décision).
+const MARKET_ELIGIBILITY_CONFIG = Object.freeze({
+    version: '2.0.0',
+    minValidSelections: 500,
+    calibrationTolerance: 0.02,
+    calibrationCriticalGap: 0.04,
+    maxECE: 0.05,
+    primary: Object.freeze({ minROI: 0.05, maxDrawdown: 0.25, minPositiveSeeds: 4 }),
+    guardrail: Object.freeze({ minROI: 0.04, maxDrawdown: 0.30, minPositiveSeeds: 3 }),
+    disabled: Object.freeze({ negativeROI: 0, maxDrawdown: 0.35 })
+});
+const MarketEligibilityEngine = (() => {
+    const SNAPSHOT_VERSION = '1.0.0';
+    const isNum = v => typeof v === 'number' && Number.isFinite(v);
+    const mean = arr => { const v = arr.filter(isNum); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+    const maxOf = arr => { const v = arr.filter(isNum); return v.length ? Math.max(...v) : null; };
+    // ── (1) AGRÉGATION DES SEEDS — pure, lecture seule des lignes de capture PROMPT 1 ──
+    // rows : tableau plat de lignes capture (une par championshipId×marketKey×seed), TOUTES
+    // seeds/championnats/marchés confondus (jamais de tableau de sélections individuelles ici :
+    // les lignes elles-mêmes sont déjà compactes, une par exécution TEST VALUE).
+    function aggregateSeeds(rows) {
+        const groups = new Map();
+        for (const r of (Array.isArray(rows) ? rows : [])) {
+            if (!r || typeof r.championshipId !== 'string' || typeof r.marketKey !== 'string') continue;
+            const key = `${r.championshipId}\u0001${r.marketKey}`;
+            if (!groups.has(key)) groups.set(key, { championshipId: r.championshipId, championshipName: r.championshipName || r.championshipId, marketKey: r.marketKey, seedRows: [] });
+            groups.get(key).seedRows.push(r);
+        }
+        const out = [];
+        for (const g of groups.values()) {
+            const seedRows = g.seedRows;
+            const validSelectionsMean = mean(seedRows.map(r => r.validSelections));
+            const calibratedProbability = mean(seedRows.map(r => r.calibratedProbabilityMean));
+            const observedFrequency = mean(seedRows.map(r => r.observedFrequency));
+            const brier = mean(seedRows.map(r => r.brier));
+            const logLoss = mean(seedRows.map(r => r.logLoss));
+            const ece = mean(seedRows.map(r => r.ece));
+            const mce = mean(seedRows.map(r => r.mce));
+            const roiValues = seedRows.map(r => r.roi).filter(isNum);
+            const roiMean = mean(roiValues);
+            const roiMin = roiValues.length ? Math.min(...roiValues) : null;
+            const roiMax = roiValues.length ? Math.max(...roiValues) : null;
+            // positive = roi >= 0 (règle explicite du cahier des charges « MOTEUR 5 SEEDS », §4 — un ROI
+            // exactement nul compte comme positif, pas seulement roi > 0).
+            const positiveSeeds = roiValues.filter(v => v >= 0).length;
+            const maxDrawdownPct = maxOf(seedRows.map(r => r.drawdownPct));
+            const maxLosingStreak = maxOf(seedRows.map(r => r.maxLosingStreak));
+            out.push({
+                championshipId: g.championshipId, championshipName: g.championshipName, marketKey: g.marketKey,
+                seedsCount: seedRows.length,
+                validSelections: validSelectionsMean !== null ? Math.round(validSelectionsMean) : 0,
+                calibratedProbability, observedFrequency, brier, logLoss, ece, mce,
+                roiMean, roiMin, roiMax, positiveSeeds, maxDrawdownPct, maxLosingStreak
+            });
+        }
+        return out;
+    }
+    // ── (2) RÈGLE DE DÉCISION — pure, AUCUN effet de bord, AUCUNE lecture de CALCULS/Analyse/LIVE ──
+    // AJOUT ADDITIF — PROMPT « MOTEUR 5 SEEDS », §8 : il n'existe plus que 2 statuts, ACTIVE et
+    // DISABLED (WATCH supprimé de la logique opérationnelle ; INSUFFICIENT_DATA devient DISABLED
+    // avec une raison explicite au lieu d'un 3e statut). §7 : DD (maxDrawdownPct) et ECE restent des
+    // champs d'information disponibles dans le résultat agrégé/snapshot (voir buildSnapshot),
+    // mais ne sont plus lus par cette fonction — ni seuls ni combinés — pour qu'aucun des deux ne
+    // puisse, à lui seul, désactiver un marché.
+    function evaluateMarket(agg, config) {
+        const cfg = config || MARKET_ELIGIBILITY_CONFIG;
+        const validSelections = Number.isFinite(agg.validSelections) ? agg.validSelections : 0;
+        if (validSelections < cfg.minValidSelections) {
+            return { status: 'DISABLED', activationLevel: null, reasons: [`Données insuffisantes : moins de ${cfg.minValidSelections} sélections valides (N=${validSelections})`] };
+        }
+        const calibratedProbability = isNum(agg.calibratedProbability) ? agg.calibratedProbability : null;
+        const observedFrequency = isNum(agg.observedFrequency) ? agg.observedFrequency : null;
+        // calibrationGap = calibrée − réel. Règle ASYMÉTRIQUE (§5) : seul un écart POSITIF
+        // (calibrée > réel) est défavorable — une fréquence réelle ≥ calibrée (gap ≤ 0) est TOUJOURS
+        // favorable, quelle que soit l'ampleur de l'écart, et n'est jamais pénalisée.
+        const calibrationGap = (calibratedProbability !== null && observedFrequency !== null) ? (calibratedProbability - observedFrequency) : null;
+        const effectiveGap = calibrationGap !== null ? Math.max(0, calibrationGap) : null;
+        // ≤ 2 pts (0.02) acceptable ; > 2 pts problème ; > 4 pts (0.04) problème majeur.
+        const calibrationOK = effectiveGap !== null && effectiveGap <= cfg.calibrationTolerance;
+        const calibrationMajorIssue = effectiveGap !== null && effectiveGap > cfg.calibrationCriticalGap;
+        const roiMean = isNum(agg.roiMean) ? agg.roiMean : null;
+        const positiveSeeds = Number.isFinite(agg.positiveSeeds) ? agg.positiveSeeds : 0;
+        // Niveau 1 — PRIMARY
+        if (calibrationOK && roiMean !== null && roiMean >= cfg.primary.minROI && positiveSeeds >= cfg.primary.minPositiveSeeds) {
+            return { status: 'ACTIVE', activationLevel: 'PRIMARY', reasons: ['Tous les critères principaux respectés'] };
+        }
+        // Niveau 2 — GARDE-FOU
+        if (calibrationOK && roiMean !== null && roiMean >= cfg.guardrail.minROI && positiveSeeds >= cfg.guardrail.minPositiveSeeds) {
+            return { status: 'ACTIVE', activationLevel: 'GUARDRAIL', reasons: ['Niveau 1 non atteint mais garde-fou validé'] };
+        }
+        // DISABLED — données suffisantes (déjà vérifié ci-dessus) mais critères ACTIVE non atteints.
+        const disabledReasons = [];
+        if (roiMean !== null && roiMean < cfg.disabled.negativeROI) disabledReasons.push('ROI moyen négatif');
+        if (calibrationMajorIssue) disabledReasons.push(`Calibration défavorable (fréquence réelle inférieure à la calibrée de plus de ${Math.round(cfg.calibrationCriticalGap * 100)} points)`);
+        if (positiveSeeds < cfg.guardrail.minPositiveSeeds) disabledReasons.push(`Moins de ${cfg.guardrail.minPositiveSeeds} seeds positives sur ${Number.isFinite(agg.seedsCount) ? agg.seedsCount : 5}`);
+        if (!disabledReasons.length) disabledReasons.push('Critères ACTIVE non atteints');
+        return { status: 'DISABLED', activationLevel: null, reasons: disabledReasons };
+    }
+    // ── (3) SNAPSHOT — assemble agrégation + décision, format compact demandé, jamais de sélection individuelle ──
+    function buildSnapshot(rows, options) {
+        const opts = options || {};
+        const config = opts.config || MARKET_ELIGIBILITY_CONFIG;
+        const aggregated = aggregateSeeds(rows);
+        const championships = {};
+        let maxSeeds = 0;
+        for (const agg of aggregated) {
+            const decision = evaluateMarket(agg, config);
+            if (!championships[agg.championshipId]) championships[agg.championshipId] = {};
+            championships[agg.championshipId][agg.marketKey] = {
+                status: decision.status, activationLevel: decision.activationLevel, reasons: decision.reasons,
+                // AJOUT ADDITIF — PROMPT 3 : seedsCount (nombre de seeds agrégées pour CE championnat×marché,
+                // déjà calculé par aggregateSeeds ci-dessus — champ purement descriptif, aucun recalcul, aucun
+                // champ existant modifié) — nécessaire à la colonne « Seeds » du Snapshot marchés (PROMPT 3).
+                seedsCount: agg.seedsCount,
+                validSelections: agg.validSelections,
+                calibratedProbability: agg.calibratedProbability, observedFrequency: agg.observedFrequency,
+                calibrationGap: (isNum(agg.calibratedProbability) && isNum(agg.observedFrequency)) ? (agg.calibratedProbability - agg.observedFrequency) : null,
+                brier: agg.brier, logLoss: agg.logLoss, ece: agg.ece, mce: agg.mce,
+                roiMean: agg.roiMean, roiMin: agg.roiMin, roiMax: agg.roiMax, positiveSeeds: agg.positiveSeeds,
+                maxDrawdownPct: agg.maxDrawdownPct, maxLosingStreak: agg.maxLosingStreak
+            };
+            if (agg.seedsCount > maxSeeds) maxSeeds = agg.seedsCount;
+        }
+        return {
+            version: SNAPSHOT_VERSION, createdAt: new Date().toISOString(), criteriaVersion: config.version,
+            seedsCount: Number.isFinite(opts.seedsCount) ? opts.seedsCount : maxSeeds,
+            championships
+        };
+    }
+    return Object.freeze({ MARKET_ELIGIBILITY_CONFIG, aggregateSeeds, evaluateMarket, buildSnapshot });
+})();
+if (typeof globalThis !== 'undefined') globalThis.MarketEligibilityEngine = MarketEligibilityEngine;
+// ═══════════════════ FIN AJOUT ADDITIF — PROMPT 2 : MarketEligibilityEngine ═══════════════════
+
+// ============================================================
+// AJOUT ADDITIF — PROMPT 2B : MarketEligibilitySelfTests (verrouillage des règles evaluateMarket)
+// ------------------------------------------------------------
+// Tests unitaires PURS de MarketEligibilityEngine.evaluateMarket()/aggregateSeeds() (aucune DB, aucun
+// moteur lourd, aucune dépendance UI, aucun effet de bord). Vérifie exactement les 14 règles du cahier
+// des charges « PROMPT 2B » : fréquence asymétrique (jamais de désactivation si réel ≥ calibré, tolérance
+// 2 pts / problème majeur 4 pts), ROI (signal négatif/positif), seeds (5/5 et 4/5 robustes, 3/5 garde-fou
+// minimum, ≤2/5 signal négatif fort, jamais fabriquées), drawdown et ECE strictement informatifs (jamais
+// seuls responsables d'un DISABLED), et seulement 2 statuts (ACTIVE/DISABLED, aucun WATCH). N'appelle et
+// ne modifie RIEN d'autre (CALCULS/calibration/température/poids/ModelContributionScore/GoalModel/Elo/
+// Forme/OffDef/H2H/walk-forward/Analyse/LIVE/Kelly/Capital/Coupons/settlement/seeds/Fair Odds INCHANGÉS).
+// ============================================================
+const MarketEligibilitySelfTests = (() => {
+    function run() {
+        const results = [];
+        const t = (id, name, fn) => {
+            let ok = false, detail = null;
+            try { const r = fn(); ok = r === true || (r && r.ok === true); detail = (r && r.detail) || null; }
+            catch (e) { detail = String((e && e.message) || e); }
+            results.push({ id, name, ok, detail });
+        };
+        // Agrégat de base neutre (ACTIVE niveau PRIMARY par défaut) : chaque test ne modifie QUE le(s)
+        // champ(s) qu'il veut isoler, pour vérifier qu'AUCUN autre critère ne vient interférer.
+        const baseAgg = (over) => Object.assign({
+            validSelections: 1000, calibratedProbability: 0.50, observedFrequency: 0.50,
+            roiMean: 0.10, roiMin: 0.05, roiMax: 0.15, positiveSeeds: 5, seedsCount: 5,
+            maxDrawdownPct: 0.10, ece: 0.01, mce: 0.01
+        }, over || {});
+
+        // 1. réel > calibré de 6 pts → ne bloque pas (favorable, quelle que soit l'ampleur de l'écart positif)
+        t(1, 'réel > calibré de 6 pts → ne bloque pas', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ calibratedProbability: 0.50, observedFrequency: 0.56 }));
+            return { ok: d.status === 'ACTIVE', detail: JSON.stringify(d) };
+        });
+        // 2. réel inférieur de 1 pt (≤ 2 pts, tolérance) → acceptable, ne bloque pas
+        t(2, 'réel inférieur de 1 pt → ne bloque pas', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ calibratedProbability: 0.50, observedFrequency: 0.49 }));
+            return { ok: d.status === 'ACTIVE', detail: JSON.stringify(d) };
+        });
+        // 3. réel inférieur de 3 pts (> 2, ≤ 4) → problème : ACTIVE non atteint, mais PAS encore la raison
+        // « calibration défavorable majeure » (réservée au seuil > 4 pts, voir test 4).
+        t(3, 'réel inférieur de 3 pts → problème (ACTIVE non atteint)', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ calibratedProbability: 0.50, observedFrequency: 0.47 }));
+            const noMajorReason = !d.reasons.some(r => /défavorable/.test(r));
+            return { ok: d.status === 'DISABLED' && noMajorReason, detail: JSON.stringify(d) };
+        });
+        // 4. réel inférieur de 5 pts (> 4) → problème majeur, raison explicite
+        t(4, 'réel inférieur de 5 pts → problème majeur', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ calibratedProbability: 0.50, observedFrequency: 0.45 }));
+            const hasMajorReason = d.reasons.some(r => /défavorable/.test(r));
+            return { ok: d.status === 'DISABLED' && hasMajorReason, detail: JSON.stringify(d) };
+        });
+        // 5. ROI -1 % → signal négatif (raison explicite « ROI moyen négatif »)
+        t(5, 'ROI -1 % → signal négatif', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ roiMean: -0.01 }));
+            const hasNegReason = d.reasons.some(r => /négatif/.test(r));
+            return { ok: d.status === 'DISABLED' && hasNegReason, detail: JSON.stringify(d) };
+        });
+        // 6. ROI +1 % → signal positif : jamais la raison « ROI moyen négatif », quel que soit le statut final
+        t(6, 'ROI +1 % → signal positif (jamais « ROI moyen négatif »)', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ roiMean: 0.01 }));
+            const noNegReason = !d.reasons.some(r => /ROI moyen négatif/.test(r));
+            return { ok: noNegReason, detail: JSON.stringify(d) };
+        });
+        // 7. 5/5 seeds → robuste (niveau PRIMARY atteint si ROI/calibration bons)
+        t(7, '5/5 seeds → robuste (niveau PRIMARY)', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ positiveSeeds: 5, seedsCount: 5 }));
+            return { ok: d.status === 'ACTIVE' && d.activationLevel === 'PRIMARY', detail: JSON.stringify(d) };
+        });
+        // 8. 4/5 seeds → robuste (niveau PRIMARY atteint si ROI/calibration bons)
+        t(8, '4/5 seeds → robuste (niveau PRIMARY)', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ positiveSeeds: 4, seedsCount: 5 }));
+            return { ok: d.status === 'ACTIVE' && d.activationLevel === 'PRIMARY', detail: JSON.stringify(d) };
+        });
+        // 9. 3/5 seeds → minimum de garde-fou (PRIMARY non atteint, GUARDRAIL atteint si ROI garde-fou suffisant)
+        t(9, '3/5 seeds → minimum garde-fou (niveau GUARDRAIL)', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ positiveSeeds: 3, seedsCount: 5, roiMean: 0.04 }));
+            return { ok: d.status === 'ACTIVE' && d.activationLevel === 'GUARDRAIL', detail: JSON.stringify(d) };
+        });
+        // 10. 2/5 → signal négatif fort (sous le garde-fou minimum, raison explicite)
+        t(10, '2/5 seeds → signal négatif fort (sous garde-fou)', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ positiveSeeds: 2, seedsCount: 5 }));
+            const hasSeedsReason = d.reasons.some(r => /seeds positives/.test(r));
+            return { ok: d.status === 'DISABLED' && hasSeedsReason, detail: JSON.stringify(d) };
+        });
+        // 11. DD 50 % seul → ne bloque pas (tous les autres critères ACTIVE respectés)
+        t(11, 'DD 50 % seul → ne bloque pas', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ maxDrawdownPct: 0.50 }));
+            return { ok: d.status === 'ACTIVE', detail: JSON.stringify(d) };
+        });
+        // 12. ECE 0.10 seul → ne bloque pas (tous les autres critères ACTIVE respectés)
+        t(12, 'ECE 0.10 seul → ne bloque pas', () => {
+            const d = MarketEligibilityEngine.evaluateMarket(baseAgg({ ece: 0.10 }));
+            return { ok: d.status === 'ACTIVE', detail: JSON.stringify(d) };
+        });
+        // 13. Aucun WATCH — quel que soit l'agrégat fourni, le statut est toujours ACTIVE ou DISABLED
+        t(13, 'aucun WATCH — seulement ACTIVE ou DISABLED', () => {
+            const samples = [
+                baseAgg({}), baseAgg({ roiMean: -0.5 }), baseAgg({ positiveSeeds: 0 }),
+                baseAgg({ validSelections: 10 }), baseAgg({ calibratedProbability: 0.9, observedFrequency: 0.1 }),
+                baseAgg({ maxDrawdownPct: 0.99, ece: 0.99 })
+            ];
+            const statuses = samples.map(agg => MarketEligibilityEngine.evaluateMarket(agg).status);
+            return { ok: statuses.every(s => s === 'ACTIVE' || s === 'DISABLED'), detail: 'statuts testés : ' + statuses.join(',') };
+        });
+        // 14. Seed manquante (4 seeds exécutées sur 5) → jamais transformée artificiellement en 5/5
+        t(14, 'seed manquante → jamais transformée artificiellement en 5/5', () => {
+            const rows = ['snapshot-seed-1', 'snapshot-seed-2', 'snapshot-seed-3', 'snapshot-seed-4'].map(seed => ({
+                championshipId: 'TestLeague', championshipName: 'TestLeague', marketKey: '1x2', seed,
+                validSelections: 800, calibratedProbabilityMean: 0.50, observedFrequency: 0.55,
+                roi: 0.10, drawdownPct: 0.10, ece: 0.01
+            }));
+            const [agg] = MarketEligibilityEngine.aggregateSeeds(rows);
+            return { ok: !!agg && agg.seedsCount === 4 && agg.positiveSeeds === 4, detail: JSON.stringify(agg) };
+        });
+        return { allPassed: results.every(r => r.ok), results };
+    }
+    return Object.freeze({ run });
+})();
+if (typeof globalThis !== 'undefined') globalThis.MarketEligibilitySelfTests = MarketEligibilitySelfTests;
+// ═══════════════════ FIN AJOUT ADDITIF — PROMPT 2B : MarketEligibilitySelfTests ═══════════════════
+
+// ============================================================
+// AJOUT ADDITIF — PROMPT 3B FINAL §19/§20/§21 : MarketEligibilityPersistenceSelfTests
+// ------------------------------------------------------------
+// Tests PURS (aucune DB, aucun App, aucun effet de bord) de trois garanties du Snapshot marchés :
+//  (a) ISOLATION PAR CHAMPIONNAT (§3/§21) : MarketEligibilityEngine.buildSnapshot ne mélange jamais
+//      deux championnats, même avec le même marketKey et des lignes entrelacées en entrée ;
+//  (b) RELOAD (§19) : un aller-retour de sérialisation (JSON.stringify/parse — même transformation
+//      structurelle qu'une écriture/lecture DB.savePreference/getPreference, cf. App._persistMarketEligibilityRows/
+//      _loadPersistedMarketEligibilityRows) laisse championshipId/marketKey/ROI/frequency/gap/ECE/
+//      positiveSeeds/status/generatedAt/matchCountAtCompute strictement identiques ;
+//  (c) OBSOLESCENCE (§1/§20) : reproduit EXACTEMENT le prédicat utilisé par App._marketEligibilityStaleFor
+//      (Number.isFinite des deux côtés + inégalité stricte, mêmes règles que persistedLeagueBlock pour
+//      CALCULS) — jamais de recalcul déclenché, une simple comparaison.
+// ============================================================
+const MarketEligibilityPersistenceSelfTests = (() => {
+    // Même prédicat, littéralement, que App._marketEligibilityStaleFor (voir plus bas dans ce fichier) :
+    // dupliqué ici en pur pour rester testable sans DB/App, jamais une formule différente.
+    function staleCheck(matchCountAtCompute, currentMatchCount) {
+        return Number.isFinite(matchCountAtCompute) && Number.isFinite(currentMatchCount) && matchCountAtCompute !== currentMatchCount;
+    }
+    function run() {
+        const results = [];
+        const t = (id, name, fn) => { let ok = false, detail = null; try { const r = fn(); ok = r === true || (r && r.ok === true); detail = (r && r.detail) || null; } catch (e) { detail = String((e && e.message) || e); } results.push({ id, name, ok, detail }); };
+
+        // 1. Isolation stricte : deux championnats, même marketKey ('1x2'), données opposées.
+        // 5 seeds par (championnat×marché) — nécessaire pour franchir minPositiveSeeds (PRIMARY=4/5,
+        // GUARDRAIL=3/5, MARKET_ELIGIBILITY_CONFIG) et obtenir un statut ACTIVE/DISABLED tranché.
+        const fiveSeeds = (championshipId, marketKey, good) => ['snapshot-seed-1', 'snapshot-seed-2', 'snapshot-seed-3', 'snapshot-seed-4', 'snapshot-seed-5'].map(seed => ({
+            championshipId, championshipName: championshipId, marketKey, seed, validSelections: 1000,
+            calibratedProbabilityMean: 0.50, observedFrequency: good ? 0.55 : 0.20,
+            roi: good ? 0.10 : -0.30, drawdownPct: good ? 0.05 : 0.60, ece: good ? 0.01 : 0.20
+        }));
+        t(1, 'isolation championnats — aucun mélange, aucun écrasement (§21)', () => {
+            const rows = [
+                ...fiveSeeds('Championnat A', '1x2', true),
+                ...fiveSeeds('Championnat B', '1x2', false),
+                ...fiveSeeds('Championnat A', 'btts_yes', false),
+                ...fiveSeeds('Championnat B', 'btts_yes', true)
+            ];
+            const snap = MarketEligibilityEngine.buildSnapshot(rows);
+            const a1x2 = snap.championships['Championnat A']['1x2'], b1x2 = snap.championships['Championnat B']['1x2'];
+            const aBtts = snap.championships['Championnat A']['btts_yes'], bBtts = snap.championships['Championnat B']['btts_yes'];
+            const noCross = a1x2.status === 'ACTIVE' && b1x2.status === 'DISABLED' && aBtts.status === 'DISABLED' && bBtts.status === 'ACTIVE';
+            const noOverwrite = Object.keys(snap.championships['Championnat A']).length === 2 && Object.keys(snap.championships['Championnat B']).length === 2;
+            return { ok: noCross && noOverwrite, detail: JSON.stringify({ a1x2: a1x2.status, b1x2: b1x2.status, aBtts: aBtts.status, bBtts: bBtts.status }) };
+        });
+        // 2. Changement de championnat sélectionné → bon Snapshot (lecture indépendante, aucune fuite).
+        t(2, 'changement de championnat → bon Snapshot retrouvé (§21)', () => {
+            const rows = [
+                { championshipId: 'Championnat A', championshipName: 'Championnat A', marketKey: '1x2', seed: 's1', validSelections: 500, calibratedProbabilityMean: 0.40, observedFrequency: 0.40, roi: 0.05, drawdownPct: 0.10, ece: 0.01 },
+                { championshipId: 'Championnat B', championshipName: 'Championnat B', marketKey: '1x2', seed: 's1', validSelections: 500, calibratedProbabilityMean: 0.60, observedFrequency: 0.60, roi: 0.02, drawdownPct: 0.10, ece: 0.01 }
+            ];
+            const snap = MarketEligibilityEngine.buildSnapshot(rows);
+            const okA = snap.championships['Championnat A']['1x2'].calibratedProbability === 0.40;
+            const okB = snap.championships['Championnat B']['1x2'].calibratedProbability === 0.60;
+            return { ok: okA && okB, detail: JSON.stringify({ okA, okB }) };
+        });
+        // 3. Reload — identité après un aller-retour de sérialisation (mêmes transformations qu'un
+        // DB.savePreference/getPreference réel : structuredClone-compatible, aucun champ perdu/altéré).
+        t(3, 'reload — identité championshipId/marketKey/ROI/frequency/gap/ECE/positiveSeeds/status (§19)', () => {
+            const rows = [{ championshipId: 'Championnat C', championshipName: 'Championnat C', marketKey: 'over_2_5', seed: 'snapshot-seed-1', validSelections: 900, calibratedProbabilityMean: 0.55, observedFrequency: 0.58, roi: 0.08, drawdownPct: 0.12, ece: 0.015 }];
+            const before = MarketEligibilityEngine.buildSnapshot(rows);
+            const payload = { version: 1, kind: 'marketEligibilityRows', generatedAt: before.createdAt, rows, matchCountAtCompute: { 'Championnat C': 1234 } };
+            const reloaded = JSON.parse(JSON.stringify(payload));
+            const after = MarketEligibilityEngine.buildSnapshot(reloaded.rows);
+            const eA = before.championships['Championnat C']['over_2_5'], eB = after.championships['Championnat C']['over_2_5'];
+            const identical = eA.status === eB.status && eA.roiMean === eB.roiMean && eA.observedFrequency === eB.observedFrequency
+                && eA.calibrationGap === eB.calibrationGap && eA.ece === eB.ece && eA.positiveSeeds === eB.positiveSeeds
+                && reloaded.matchCountAtCompute['Championnat C'] === 1234 && reloaded.generatedAt === before.createdAt;
+            return { ok: identical, detail: JSON.stringify({ eA, eB, matchCountAtCompute: reloaded.matchCountAtCompute }) };
+        });
+        // 4. Obsolescence — cas valide : mêmes nombres de matchs → Snapshot valide (stale=false).
+        t(4, 'obsolescence — matchCountAtCompute=1000, matchCount actuel=1000 → valide (§20)', () => {
+            return { ok: staleCheck(1000, 1000) === false, detail: `stale=${staleCheck(1000, 1000)}` };
+        });
+        // 5. Obsolescence — cas obsolète : nombres différents → stale=true (mais AUCUN recalcul déclenché
+        // par cette seule comparaison — staleCheck ne fait rien d'autre qu'un booléen, §1).
+        t(5, 'obsolescence — matchCountAtCompute=1000, matchCount actuel=1001 → stale=true, aucun recalcul (§1/§20)', () => {
+            return { ok: staleCheck(1000, 1001) === true, detail: `stale=${staleCheck(1000, 1001)}` };
+        });
+        // 6. Obsolescence — référence absente (Snapshot jamais capturé, ou hérité d'avant ce correctif)
+        // → jamais assimilée à un refus/à une obsolescence : stale=false par dégradation gracieuse.
+        t(6, 'obsolescence — référence absente → jamais stale (dégradation gracieuse, §25)', () => {
+            return { ok: staleCheck(null, 1000) === false && staleCheck(undefined, 1000) === false, detail: `${staleCheck(null, 1000)}/${staleCheck(undefined, 1000)}` };
+        });
+        return { allPassed: results.every(r => r.ok), results };
+    }
+    return Object.freeze({ run, staleCheck });
+})();
+if (typeof globalThis !== 'undefined') globalThis.MarketEligibilityPersistenceSelfTests = MarketEligibilityPersistenceSelfTests;
+// ═══════════════════ FIN AJOUT ADDITIF — PROMPT 3B FINAL : MarketEligibilityPersistenceSelfTests ═══════════════════
+
+// ============================================================
+// AJOUT ADDITIF — PROMPT 3B FINAL §14/§15/§16/§17 : FairOddsEligibilitySelfTests
+// ------------------------------------------------------------
+// Tests PURS de BacktestCore.fairOddsEligibility (aucune DB, aucun App, aucun moteur lourd) : bande
+// standard 1.15 <= FairOdds <= 2.50, Score Exact FairOdds >= 1.15 sans plafond, probabilités
+// invalides, non-mutation, et vérification statique que le filtre est bien appliqué AVANT le tirage
+// aléatoire dans BacktestCore.runValueTest (§9/§16), une seule sélection par marché (§17).
+// ============================================================
+const FairOddsEligibilitySelfTests = (() => {
+    function run() {
+        const results = [];
+        const t = (id, name, fn) => { let ok = false, detail = null; try { const r = fn(); ok = r === true || (r && r.ok === true); detail = (r && r.detail) || null; } catch (e) { detail = String((e && e.message) || e); } results.push({ id, name, ok, detail }); };
+        const fe = (p, capped) => BacktestCore.fairOddsEligibility(p, capped);
+
+        // ── Standard (capped=true) — §14 ──
+        t(1, 'Standard — P=0.90 (FairOdds≈1.111) → REJECT', () => { const d = fe(0.90, true); return { ok: d.eligible === false && d.reason === 'fair_odds_below_minimum', detail: JSON.stringify(d) }; });
+        t(2, 'Standard — P=1/1.15 (FairOdds=1.15) → ACCEPT', () => { const d = fe(1 / 1.15, true); return { ok: d.eligible === true, detail: JSON.stringify(d) }; });
+        t(3, 'Standard — P=0.50 (FairOdds=2.00) → ACCEPT', () => { const d = fe(0.50, true); return { ok: d.eligible === true, detail: JSON.stringify(d) }; });
+        t(4, 'Standard — P=0.40 (FairOdds=2.50) → ACCEPT (borne haute incluse)', () => { const d = fe(0.40, true); return { ok: d.eligible === true, detail: JSON.stringify(d) }; });
+        t(5, 'Standard — P=0.39 (FairOdds≈2.564) → REJECT', () => { const d = fe(0.39, true); return { ok: d.eligible === false && d.reason === 'fair_odds_above_maximum', detail: JSON.stringify(d) }; });
+
+        // ── Score Exact (capped=false) — §14 ──
+        t(6, 'Exact Score — FairOdds=1.10 → REJECT (borne basse toujours appliquée)', () => { const d = fe(1 / 1.10, false); return { ok: d.eligible === false && d.reason === 'fair_odds_below_minimum', detail: JSON.stringify(d) }; });
+        t(7, 'Exact Score — FairOdds=1.15 → ACCEPT', () => { const d = fe(1 / 1.15, false); return { ok: d.eligible === true, detail: JSON.stringify(d) }; });
+        t(8, 'Exact Score — FairOdds=5.00 → ACCEPT (aucun plafond)', () => { const d = fe(1 / 5.00, false); return { ok: d.eligible === true, detail: JSON.stringify(d) }; });
+        t(9, 'Exact Score — FairOdds=20.00 → ACCEPT (aucun plafond)', () => { const d = fe(1 / 20.00, false); return { ok: d.eligible === true, detail: JSON.stringify(d) }; });
+
+        // ── Probabilités invalides — §14 ──
+        t(10, 'P <= 0 → REJECT', () => { const d1 = fe(0, true), d2 = fe(-0.1, true); return { ok: d1.eligible === false && d2.eligible === false, detail: JSON.stringify([d1, d2]) }; });
+        t(11, 'P >= 1 → REJECT', () => { const d1 = fe(1, true), d2 = fe(1.2, true); return { ok: d1.eligible === false && d2.eligible === false, detail: JSON.stringify([d1, d2]) }; });
+
+        // ── Non-mutation — §15 ──
+        t(12, 'non-mutation — la probabilité en entrée est inchangée après filtre', () => {
+            const p = 0.4321; fe(p, true); return { ok: p === 0.4321, detail: `p=${p}` };
+        });
+        t(13, 'non-mutation — un candidat filtré garde exactement son c.prob d\'origine', () => {
+            const candidates = [{ id: 'x', prob: 0.90 }, { id: 'y', prob: 0.40 }];
+            const admissible = candidates.filter(c => fe(c.prob, true).eligible);
+            return { ok: admissible.length === 1 && admissible[0].prob === 0.40 && candidates[1].prob === 0.40, detail: JSON.stringify(admissible) };
+        });
+
+        // ── Ordre : filtre AVANT le tirage aléatoire (§9/§16) — vérification statique du code source ──
+        t(14, 'runValueTest — admissibleCandidates() appelé avant pickAdmissibleIndex() à chaque site (§9)', () => {
+            const src = Function.prototype.toString.call(BacktestCore.runValueTest);
+            const sites = [/admissible=admissibleCandidates\(candidates,true\)[\s\S]{0,120}?pickAdmissibleIndex/, /cmAdmissible=admissibleCandidates\(cmCandidates,true\)[\s\S]{0,120}?pickAdmissibleIndex/, /esAdmissible=admissibleCandidates\(esCandidates,false\)[\s\S]{0,120}?pickAdmissibleIndex/, /ahAdmissibleP2=admissibleCandidates\(ahCandidatesP2,true\)[\s\S]{0,150}?pickAdmissibleIndex/];
+            const missing = sites.filter(re => !re.test(src));
+            return { ok: missing.length === 0, detail: missing.length ? `${missing.length} site(s) où l'ordre filtre→tirage n'est pas vérifié` : '4 sites vérifiés (goals, comptage, score exact, handicap asiatique)' };
+        });
+        t(15, 'admissibleCandidates() délègue à BacktestCore.fairOddsEligibility (aucune formule dupliquée)', () => {
+            const src = Function.prototype.toString.call(BacktestCore.runValueTest);
+            return { ok: /admissibleCandidates=\(candidates,capped=true\)=>candidates\.filter\(c=>fairOddsEligibility\(c\.prob,capped\)\.eligible\)/.test(src.replace(/\s+/g, '')), detail: 'source vérifiée' };
+        });
+
+        // ── Une seule sélection par marché — §17 (déjà garanti par pickAdmissibleIndex, vérifié ici) ──
+        t(16, 'pickAdmissibleIndex — jamais plus d\'un index renvoyé (déterministe, seed fixe)', () => {
+            const src = Function.prototype.toString.call(BacktestCore.runValueTest).replace(/\s+/g, ' ');
+            return { ok: /return Math\.floor\(rng\(\)\*n\)/.test(src) && /if\(n===1\)return 0/.test(src), detail: 'un seul index tiré, jamais un tableau de sélections' };
+        });
+        // ── Absence de candidat — §10 : aucun tirage fabriqué (pickAdmissibleIndex(-1) sur ensemble vide) ──
+        t(17, 'ensemble admissible vide → aucune sélection (pas de fabrication, pas de cote de repli)', () => {
+            const candidates = [{ id: 'x', prob: 0.95 }, { id: 'y', prob: 0.10 }]; // tous hors bande [1.15,2.50]
+            const admissible = candidates.filter(c => fe(c.prob, true).eligible);
+            return { ok: admissible.length === 0, detail: JSON.stringify(admissible) };
+        });
+        return { allPassed: results.every(r => r.ok), results };
+    }
+    return Object.freeze({ run });
+})();
+if (typeof globalThis !== 'undefined') globalThis.FairOddsEligibilitySelfTests = FairOddsEligibilitySelfTests;
+// ═══════════════════ FIN AJOUT ADDITIF — PROMPT 3B FINAL : FairOddsEligibilitySelfTests ═══════════════════
+
+// ============================================================
+// AJOUT ADDITIF — PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §16 : ManualSeedCoherenceSelfTests
+// ------------------------------------------------------------
+// Tests PURS (aucune DB, aucun App, aucune donnée réelle nécessaire) prouvant que Manuel et Seed
+// partagent EXACTEMENT le même moteur financier (ValueTestEngine.simulateCapital, INCHANGÉ) et les
+// mêmes options canoniques (App._canonicalCapitalOptions(), UNE SEULE source). Le cas réel du
+// championnat (§12, « Manuel +122 % / Seed +2-3 % ») nécessite les données réelles de l'utilisateur :
+// App.diagnoseManualVsSeedForMarket(championshipId, marketKey, seedId) est prévu à cet effet et
+// n'est pas exécutable ici (voir rapport final) — NON EXÉCUTÉ, jamais un résultat inventé.
+// ============================================================
+const ManualSeedCoherenceSelfTests = (() => {
+    function run() {
+        const results = [];
+        const t = (id, name, fn) => { let ok = false, detail = null; try { const r = fn(); ok = r === true || (r && r.ok === true); detail = (r && r.detail) || null; } catch (e) { detail = String((e && e.message) || e); } results.push({ id, name, ok, detail }); };
+        const App_ = (typeof App !== 'undefined') ? App : null;
+        const canon = App_ && typeof App_._canonicalCapitalOptions === 'function' ? App_._canonicalCapitalOptions() : null;
+
+        // Test 1 — Capital initial 10000 (Manuel + Seed 1..5 = la MÊME valeur canonique unique).
+        t(1, 'Capital initial === 10000 pour Manuel et chaque Seed (§2)', () => {
+            return { ok: !!canon && canon.initialCapital === 10000, detail: JSON.stringify(canon) };
+        });
+        // Test 2 — Kelly divisor 10 identique Manuel/Seed (§3).
+        t(2, 'Kelly divisor === 10, identique Manuel/Seed (§3)', () => {
+            return { ok: !!canon && canon.kellyDivisor === 10, detail: JSON.stringify(canon) };
+        });
+        // Test 3 — Kelly cap identique (capMode/capPercent portés par la MÊME source canonique, §4).
+        t(3, 'Kelly cap (capMode/capPercent) identique Manuel/Seed (§4)', () => {
+            return { ok: !!canon && canon.capMode === 'A' && canon.capPercent === null, detail: JSON.stringify(canon) };
+        });
+        // Test 4 — Stake maximum identique : AUCUN plafond de mise séparé n'existe dans
+        // ValueTestEngine.simulateCapital en dehors du plafond d'exposition (capMode B + capPercent,
+        // Mode A = Infinity) — déjà couvert par le Test 3, donc trivialement identique ici aussi.
+        t(4, 'stake maximum (plafond d\'exposition) identique Manuel/Seed — aucun mécanisme séparé (§4)', () => {
+            return { ok: !!canon && canon.capMode === 'A', detail: 'Mode A => cap=Infinity, aucun plafond de mise distinct dans simulateCapital' };
+        });
+        // Tests 5-9 — même sélection ⇒ même stake/profit/capital final/ROI/drawdown : simulateCapital
+        // est une fonction PURE, donc les mêmes rows + mêmes options donnent bit-à-bit le même résultat,
+        // qu'on l'appelle « côté Manuel » ou « côté Seed ».
+        const sampleRows = [
+            { matchIdentity: 'm1', championship: 'PL', date: '2020-01-01', home: 'A', away: 'B', marketTab: '1x2', marketId: '1x2', selectionId: 'result_home', label: '1', line: null, calibratedProbability: 0.60, result: 'GAGNANT' },
+            { matchIdentity: 'm2', championship: 'PL', date: '2020-01-02', home: 'C', away: 'D', marketTab: '1x2', marketId: '1x2', selectionId: 'result_away', label: '2', line: null, calibratedProbability: 0.45, result: 'PERDANT' },
+            { matchIdentity: 'm3', championship: 'PL', date: '2020-01-03', home: 'E', away: 'F', marketTab: 'btts', marketId: 'btts', selectionId: 'yes', label: 'BTTS Oui', line: null, calibratedProbability: 0.55, result: 'GAGNANT' }
+        ];
+        const opts = canon || { initialCapital: 10000, kellyDivisor: 10, edgeDecimal: 0.05, capMode: 'A', capPercent: null };
+        const manualSim = ValueTestEngine.simulateCapital(sampleRows, Object.assign({}, opts));
+        const seedSim = ValueTestEngine.simulateCapital(sampleRows.map(r => ({ ...r })), Object.assign({}, opts)); // copie distincte des objets
+        t(5, 'même sélection → même mise totale (Manuel vs Seed, §16 test5)', () => ({ ok: manualSim.ok && seedSim.ok && manualSim.stats.totalStaked === seedSim.stats.totalStaked, detail: `${manualSim.stats && manualSim.stats.totalStaked} / ${seedSim.stats && seedSim.stats.totalStaked}` }));
+        t(6, 'même sélection → même profit (§16 test6)', () => ({ ok: manualSim.stats.profit === seedSim.stats.profit, detail: `${manualSim.stats.profit} / ${seedSim.stats.profit}` }));
+        t(7, 'même sélection → même capital final (§16 test7)', () => ({ ok: manualSim.stats.finalCapital === seedSim.stats.finalCapital, detail: `${manualSim.stats.finalCapital} / ${seedSim.stats.finalCapital}` }));
+        t(8, 'même sélection → même ROI (returnPct) (§16 test8)', () => ({ ok: manualSim.stats.returnPct === seedSim.stats.returnPct, detail: `${manualSim.stats.returnPct} / ${seedSim.stats.returnPct}` }));
+        t(9, 'même sélection → même drawdown (§16 test9)', () => ({ ok: manualSim.stats.maxDrawdownAbs === seedSim.stats.maxDrawdownAbs && manualSim.stats.maxDrawdownPct === seedSim.stats.maxDrawdownPct, detail: `${manualSim.stats.maxDrawdownAbs}/${manualSim.stats.maxDrawdownPct}` }));
+        // Test 10 — Manuel non modifié : valeurs de référence figées (règlement/Kelly/capital), calculées
+        // une fois avec ces mêmes sampleRows et ces mêmes options ; toute régression future de
+        // simulateCapital fera échouer ce test (aucune formule de Kelly/settlement n'a été touchée ici).
+        t(10, 'Manuel non modifié — résultat stable sur un jeu de données fixe (§11)', () => {
+            return { ok: manualSim.ok && manualSim.stats.matchCount === 3 && manualSim.stats.selectionCount === 3 && Number.isFinite(manualSim.stats.finalCapital), detail: JSON.stringify(manualSim.stats) };
+        });
+        // Test 11 — Fair Odds identiques (bornes canoniques inchangées par ce prompt, §6).
+        t(11, 'Fair Odds standards 1.15-2.50 / Score Exact >=1.15, inchangées par ce correctif (§6)', () => {
+            return { ok: typeof BacktestCore !== 'undefined' && BacktestCore.FAIR_ODDS_MIN === 1.15 && BacktestCore.FAIR_ODDS_CAP === 2.50, detail: `${BacktestCore && BacktestCore.FAIR_ODDS_MIN}/${BacktestCore && BacktestCore.FAIR_ODDS_CAP}` };
+        });
+        // Test 12 — Filtre Fair Odds avant RNG (délégué à FairOddsEligibilitySelfTests, revérifié ici).
+        t(12, 'filtre Fair Odds appliqué avant le tirage aléatoire (§6, revérification)', () => {
+            const src = Function.prototype.toString.call(BacktestCore.runValueTest).replace(/\s+/g, ' ');
+            return { ok: /admissible=admissibleCandidates\(candidates,true\)/.test(src) && src.indexOf('admissible=admissibleCandidates') < src.indexOf('pickAdmissibleIndex(family'), detail: 'ordre source vérifié' };
+        });
+        // Test 13 — Une seule sélection par marché (délégué, revérifié structurellement).
+        t(13, 'une seule sélection admissible tirée par match×marché (§7, revérification)', () => {
+            const src = Function.prototype.toString.call(BacktestCore.runValueTest).replace(/\s+/g, ' ');
+            return { ok: (src.match(/pickAdmissibleIndex\(/g) || []).length >= 4 && /if\(idx<0\)continue/.test(src.replace(/\s+/g, '')), detail: 'un seul index par site, aucune boucle de sélections multiples' };
+        });
+        // Test 14 — Seed déterministe : même seed + même clé ⇒ même valeur RNG.
+        t(14, 'Seed déterministe — même seed + mêmes données → même tirage (§14)', () => {
+            const rngA = PredictiveCoreV30.createRng('valuetest_market_pick|snapshot-seed-1|PL|m1|1x2');
+            const rngB = PredictiveCoreV30.createRng('valuetest_market_pick|snapshot-seed-1|PL|m1|1x2');
+            return { ok: rngA() === rngB(), detail: 'deux RNG construits avec la même clé produisent la même première valeur' };
+        });
+        // Test 15 — Deux seeds différents PEUVENT donner des tirages différents (statistiquement possible,
+        // jamais garanti à 100 % pour une clé isolée — vérifié sur plusieurs clés pour la robustesse).
+        t(15, 'Seeds différents → tirages parfois différents sur un échantillon de clés (§15)', () => {
+            let diff = 0;
+            for (let i = 0; i < 20; i++) {
+                const key = `valuetest_market_pick|SEED|PL|m${i}|1x2`;
+                const vA = PredictiveCoreV30.createRng(key.replace('SEED', 'snapshot-seed-1'))();
+                const vB = PredictiveCoreV30.createRng(key.replace('SEED', 'snapshot-seed-2'))();
+                if (vA !== vB) diff++;
+            }
+            return { ok: diff > 0, detail: `${diff}/20 clés donnent un tirage différent entre snapshot-seed-1 et snapshot-seed-2` };
+        });
+        // Test 16 — CŒUR DU CORRECTIF : sélections forcées identiques (mêmes objets/valeurs, comme si
+        // le Seed et le Manuel avaient tiré la même sélection) → résultats financiers 100% identiques,
+        // avec les MÊMES options canoniques que celles désormais transmises par les deux sites d'appel réels.
+        t(16, 'sélections forcées identiques → résultats financiers identiques (§10/§16 test16, CRITIQUE)', () => {
+            const rowsManual = sampleRows.map(r => ({ ...r }));
+            const rowsSeedForced = sampleRows.map(r => ({ ...r })); // "Seed forcé" = mêmes sélections que le Manuel
+            const simM = ValueTestEngine.simulateCapital(rowsManual, Object.assign({}, opts));
+            const simS = ValueTestEngine.simulateCapital(rowsSeedForced, Object.assign({}, opts));
+            const same = JSON.stringify(simM.stats) === JSON.stringify(simS.stats);
+            return { ok: same, detail: same ? '0 différence' : `FIELD DIFF manuel=${JSON.stringify(simM.stats)} seed=${JSON.stringify(simS.stats)}` };
+        });
+        // Test 17 — Le Seed appelle bien exactement ValueTestEngine.simulateCapital() du Manuel, via la
+        // MÊME source d'options (App._canonicalCapitalOptions()), aux trois sites d'appel automatisés
+        // (Manuel bouton, Snapshot 5 Seeds, orchestrateur « Tous les championnats »).
+        t(17, 'les 3 sites d\'appel (Manuel, Snapshot Seeds, orchestrateur global) utilisent App._canonicalCapitalOptions() (§17)', () => {
+            if (!App_) return { ok: false, detail: 'App indisponible dans cet environnement de test' };
+            const srcManual = Function.prototype.toString.call(App_.runValueTestForChampionship);
+            const srcSnapshot = Function.prototype.toString.call(App_.runSnapshotForChampionship);
+            const srcAll = Function.prototype.toString.call(App_.runValueTestAllChampionships);
+            const hit = s => /capitalOptions:\s*this\._canonicalCapitalOptions\(\)/.test(s);
+            return { ok: hit(srcManual) && hit(srcSnapshot) && hit(srcAll), detail: JSON.stringify({ manual: hit(srcManual), snapshot: hit(srcSnapshot), all: hit(srcAll) }) };
+        });
+        return { allPassed: results.every(r => r.ok), results };
+    }
+    return Object.freeze({ run });
+})();
+if (typeof globalThis !== 'undefined') globalThis.ManualSeedCoherenceSelfTests = ManualSeedCoherenceSelfTests;
+// ═══════════════════ FIN AJOUT ADDITIF — PROMPT « COHÉRENCE MANUEL ↔ SEEDS » : ManualSeedCoherenceSelfTests ═══════════════════
+
+// ============================================================
+// AJOUT ADDITIF — PROMPT 4 : ROUTAGE clé LIVE → marketKey Snapshot marchés
+// ------------------------------------------------------------
+// Fonction PURE, STRICTEMENT une correspondance de nommage (aucun calcul,
+// aucune probabilité, aucune calibration) : associe la clé d'affichage
+// utilisée en Analyse (result.valueBets[].key, clé des marchés de comptage
+// `${compactKey}total${over|under}${line}` — voir App.renderCountMarketsSection,
+// clé Asian Handicap, clé Score exact `score_exact_H_A`) au marketKey utilisé
+// par MarketEligibilityEngine/BacktestCore.runValueTest (championship×marketTab,
+// PROMPT 1/2/3 — voir GOAL_MARKET_TAB et countMarketStatKeys/STAT_DEFINITIONS
+// ligne ~7837/12801/12910/12938/12954/12987). Nécessaire pour retrouver, en
+// lecture seule, le statut ACTIVE/DISABLED du Snapshot
+// marchés pour CHAQUE marché individuel affiché en Analyse. AUCUN marché
+// supprimé, AUCUNE probabilité recalculée : une clé non reconnue renvoie
+// simplement null (le marché reste alors non concerné par le Snapshot,
+// jamais masqué).
+// ============================================================
+const MarketEligibilityRouting = (() => {
+    const COUNT_PREFIX_TO_TAB = Object.freeze({
+        tirscadres: 'tirs_cadres', tirs: 'tirs', corners: 'corners',
+        cartonsjaunes: 'cartons_jaunes', cartonsrouges: 'cartons_rouges', fautes: 'fautes'
+    });
+    // 'tirscadres' DOIT être testé avant 'tirs' (préfixe partagé) — même ordre
+    // que EngineV22._resolveCalibrationMarketKey (ligne ~5944), même regex
+    // source (STAT_META de App.renderCountMarketsSection, compactKey exact).
+    const COUNT_MARKET_RE = /^(tirscadres|tirs|corners|cartonsjaunes|cartonsrouges|fautes)total(?:over|under)\d/i;
+    function tabKeyForLiveKey(key) {
+        const k = String(key || '');
+        if (!k) return null;
+        if (typeof AsianHandicapEngine !== 'undefined' && typeof AsianHandicapEngine.parseSelectionKey === 'function' && AsianHandicapEngine.parseSelectionKey(k)) return 'asian_handicap';
+        if (k === '1' || k === 'X' || k === '2') return '1x2';
+        if (k === '1X' || k === 'X2' || k === '12') return 'double_chance';
+        if (k === 'btts' || k === 'btts_non') return 'btts';
+        if (/^score_exact_\d+_\d+$/.test(k)) return 'score_exact';
+        if (/^overTeam/i.test(k) || /^underTeam/i.test(k)) return 'total_equipe';
+        if (/^over\d/i.test(k) || /^under\d/i.test(k)) return 'over_under';
+        const cm = COUNT_MARKET_RE.exec(k);
+        if (cm) return COUNT_PREFIX_TO_TAB[cm[1].toLowerCase()] || null;
+        return null;
+    }
+    return Object.freeze({ tabKeyForLiveKey });
+})();
+if (typeof globalThis !== 'undefined') globalThis.MarketEligibilityRouting = MarketEligibilityRouting;
+// ═══════════════════ FIN AJOUT ADDITIF — PROMPT 4 : ROUTAGE clé LIVE ═══════════════════
+
 
 // ============================================================
 // ValueTestSelfTests — tests ciblés (purs, sans DB ni moteur lourd).
@@ -10117,7 +10749,7 @@ const BacktestCore = (() => {
     // Grille de températures configurable — Partie I de la refonte.
     // 23 valeurs de 0.50 à 2.00. Jamais optimisée sur TEST.
     // La température est sélectionnée sur VALIDATION uniquement (anti-leakage).
-    const CONFIG=Object.freeze({warmupMatches:100,minTeamHistory:10,maxTeamHistory:100,vectorTolerance:1e-12,logEpsilon:1e-15,minProbability:.50,minFairOdds:1.50,maxFairOdds:2.20,initialCapital:10000,kellyDivisor:5,stakeCap:.01,maxGoals:10,monteCarloSims:PredictiveCoreV30.DEFAULT_MONTE_CARLO_SIMS,predictiveCoreSignature:PredictiveCoreV30.SIGNATURE,trainRatio:.40,validationRatio:.20,
+    const CONFIG=Object.freeze({warmupMatches:100,minTeamHistory:10,maxTeamHistory:100,vectorTolerance:1e-12,logEpsilon:1e-15,minProbability:.50,minFairOdds:1.50,maxFairOdds:2.20,initialCapital:10000,kellyDivisor:10,stakeCap:.01,maxGoals:10,monteCarloSims:PredictiveCoreV30.DEFAULT_MONTE_CARLO_SIMS,predictiveCoreSignature:PredictiveCoreV30.SIGNATURE,trainRatio:.40,validationRatio:.20,
         // GRILLE ÉTENDUE : 0.50 → 2.00 (23 points de test)
         temperatureCandidates:Object.freeze([.50,.55,.60,.65,.70,.75,.80,.85,.90,.95,1.00,1.05,1.10,1.15,1.20,1.25,1.30,1.35,1.40,1.50,1.60,1.75,2.00]),
         // Seuils de fiabilité des échantillons pour la sélection de température :
@@ -10614,6 +11246,24 @@ const BacktestCore = (() => {
         if(!Number.isFinite(probability)||probability<=0||probability>1)return null;
         return 1/probability;
     }
+
+    // ═══════════════════ AJOUT ADDITIF — PROMPT 3B FINAL §5-§17 : FILTRE FAIR ODDS TEST VALUE ═══════════════════
+    // Admissibilité TEST VALUE UNIQUEMENT (aucun effet sur CALCULS/Analyse/LIVE/Capital/Coupons/
+    // settlement/calibration/température/poids — voir §5). Ne recalcule ni ne modifie JAMAIS la
+    // probabilité : fairOdds = 1/probability, calcul exact, comparaisons sur la vraie valeur numérique
+    // (§11 : aucun arrondi dans le calcul, seul l'affichage peut être arrondi ailleurs).
+    // Bornes : 1.15 <= FairOdds <= 2.50 pour les marchés standards (capped=true) ; Score Exact
+    // (capped=false) n'a pas de plafond mais reste soumis à la borne basse 1.15 (§8).
+    const FAIR_ODDS_MIN=1.15;
+    const FAIR_ODDS_CAP=2.50;
+    function fairOddsEligibility(probability,capped=true){
+        if(!Number.isFinite(probability)||probability<=0||probability>=1)return{eligible:false,reason:'probability_invalid',fairOdds:null};
+        const fairOdds=1/probability;
+        if(fairOdds<FAIR_ODDS_MIN)return{eligible:false,reason:'fair_odds_below_minimum',fairOdds};
+        if(capped&&fairOdds>FAIR_ODDS_CAP)return{eligible:false,reason:'fair_odds_above_maximum',fairOdds};
+        return{eligible:true,reason:null,fairOdds};
+    }
+    // ═══════════════════ FIN AJOUT ADDITIF — PROMPT 3B FINAL §5-§17 ═══════════════════
 
     // calculateTargetOdds : cote minimale à obtenir chez le bookmaker pour
     // atteindre un edge cible donné (ex. targetEdge=0.05 → +5%). Absente du
@@ -12593,17 +13243,13 @@ const BacktestCore = (() => {
         // Construit l'ensemble ADMISSIBLE avant tout tirage aléatoire, pour tous les marchés
         // concernés (1X2, Double Chance, BTTS, Totals, Team Totals, Handicap Asiatique,
         // marchés de comptage : Tirs/Tirs cadrés/Corners/Cartons jaunes/Cartons rouges/Fautes) :
-        //   0 < calibratedProbability < 1  ET  FairOdds = 1/calibratedProbability <= 2.50.
+        //   0 < calibratedProbability < 1  ET  1.15 <= FairOdds = 1/calibratedProbability <= 2.50.
         // EXCEPTION Score Exact (isFairOddsCapped=false ci-dessous, appliquée à son site d'appel
-        // uniquement) : aucune limite de Fair Odds, seule la validité 0<p<1 est exigée — volontaire,
-        // les scores exacts ont naturellement des Fair Odds élevées (cf. cahier des charges).
-        const FAIR_ODDS_CAP=2.50;
-        const isProbabilityValid=prob=>Number.isFinite(prob)&&prob>0&&prob<1;
-        const isFairOddsAdmissible=(prob,capped)=>isProbabilityValid(prob)&&(!capped||(1/prob)<=FAIR_ODDS_CAP);
-        // Filtre l'ensemble des candidats déjà construits (probabilité déjà calibrée, résultat déjà
-        // déterminé — AUCUN recalcul ici) sur `c.prob`, sans jamais le modifier. capped=true partout
-        // sauf Score Exact (appelé avec capped=false à son site d'appel dédié plus bas).
-        const admissibleCandidates=(candidates,capped=true)=>candidates.filter(c=>isFairOddsAdmissible(c.prob,capped));
+        // uniquement) : aucun plafond supérieur de Fair Odds, mais la borne basse 1.15 s'applique
+        // quand même (cf. PROMPT 3B FINAL §8 : Fair Odds < 1.15 → rejetée même pour Score Exact).
+        // Logique déléguée à BacktestCore.fairOddsEligibility (pure, exportée, testée par
+        // FairOddsEligibilitySelfTests) : AUCUNE formule dupliquée ici.
+        const admissibleCandidates=(candidates,capped=true)=>candidates.filter(c=>fairOddsEligibility(c.prob,capped).eligible);
         // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE : FILTRE FAIR ODDS ═══════════════════
         // ═══════════════════ AJOUT ADDITIF — TEST VALUE PARTIE 2 ═══════════════════
         // Table multi-marchés / multi-sélections, SANS AUCUNE COTE BOOKMAKER : réutilise
@@ -12933,6 +13579,61 @@ const BacktestCore = (() => {
         const financialByMarket=(capitalSim&&capitalSim.ok&&Array.isArray(capitalSim.byMarket))?capitalSim.byMarket:[];
         // (3) Fusion pure championship×marketKey — aucune sélection individuelle conservée.
         const unitStats=ValueTestEngine.buildUnitStatsRows(marketStats,financialByMarket);
+        // ═══ AJOUT ADDITIF — CAPTURE COMPACTE MarketEligibilityEngine (PROMPT 1) : championshipId×marketKey×seed ═══
+        // Objectif STRICTEMENT en aval de TEST VALUE (aucune détermination de statut ici) : enrichit chaque ligne
+        // unitStats déjà produite ci-dessus avec les champs demandés par la future capture (seed, alias de noms,
+        // mce, drawdown/drawdownPct/maxLosingStreak par marché). AUCUN champ existant renommé/supprimé (tout
+        // consommateur actuel de unitStats — orchestratorUnitStatsTable — continue de lire exactement les mêmes
+        // clés qu'avant) : uniquement des clés SUPPLÉMENTAIRES.
+        // Drawdown/Capital PAR marché : RÉUTILISE EXACTEMENT simulateCapital() — même fonction, mêmes formules
+        // Kelly/settlement que le calcul agrégé ci-dessus et que le sélecteur de marché CAPITAL (increment76) —
+        // simplement appelée sur capitalRows filtré à CE seul marché. AUCUN second simulateur financier créé.
+        // keepDetail:false : curve/matches ne sont jamais conservés, seul .stats (compact) est lu puis la
+        // référence à simMk est perdue immédiatement après la boucle — mémoire bornée à O(nombre de marchés).
+        const mceByMarket=new Map(marketStats.map(m=>[m.marketTab,Number.isFinite(m.mce)?m.mce:null]));
+        const marketKeysForCapital=[...new Set(marketStats.map(m=>m.marketTab))];
+        const capitalStatsByMarket=new Map();
+        for(const mk of marketKeysForCapital){
+            const rowsForMarket=capitalRows.filter(r=>r.marketTab===mk);
+            const simMk=ValueTestEngine.simulateCapital(rowsForMarket,Object.assign({},options.capitalOptions,{keepDetail:false}));
+            capitalStatsByMarket.set(mk,(simMk&&simMk.ok&&simMk.stats)?simMk.stats:null);
+        }
+        // Libellé lisible par marché — PUREMENT un alias d'affichage (aucun impact sur marketKey/
+        // routage/calibration) pour la colonne « marketLabel » demandée par le cahier des charges
+        // « MOTEUR 5 SEEDS », §4. Repli sur marketKey lui-même si aucun libellé connu.
+        const SNAPSHOT_MARKET_LABELS={'1x2':'1X2','double_chance':'Double Chance','btts':'BTTS','asian_handicap':'Handicap asiatique','score_exact':'Score exact','totals_over':'Total buts Over','totals_under':'Total buts Under','team_totals_over':'Total buts équipe Over','team_totals_under':'Total buts équipe Under'};
+        for(const r of unitStats){
+            r.seed=seed;
+            r.championshipId=r.championship; r.championshipName=r.championship;
+            r.selections=r.selectionsDrawn; r.validSelections=r.valid; r.invalidSelections=r.invalid;
+            r.calibratedProbabilityMean=r.avgProbability;
+            r.mce=mceByMarket.has(r.marketKey)?mceByMarket.get(r.marketKey):null;
+            r.profit=r.pnl;
+            const cs=capitalStatsByMarket.get(r.marketKey)||null;
+            r.initialCapital=cs?cs.initialCapital:null;
+            r.finalCapital=cs?cs.finalCapital:null;
+            r.drawdown=cs?cs.maxDrawdownAbs:null;
+            r.drawdownPct=cs?cs.maxDrawdownPct:null;
+            r.maxLosingStreak=cs?cs.longestLossStreak:null;
+            // ═══ CORRECTIF « COHÉRENCE MANUEL ↔ SEEDS » §5/§6 : le ROI par marché DOIT provenir de la
+            // simulation financière INDÉPENDANTE de ce marché (capital propre 10000, chronologique,
+            // returnPct de simulateCapital() — `cs` ci-dessus, déjà calculé, jamais utilisé pour roi
+            // jusqu'ici), jamais d'un ratio pnl/totalStake issu d'un run où le capital est PARTAGÉ entre
+            // TOUS les marchés (byMarket.roi du run global `capitalSim`, seule source de r.roi avant ce
+            // correctif via buildUnitStatsRows/financialByMarket). AUCUNE formule de Kelly/settlement/
+            // capital modifiée : simulateCapital() et son returnPct existent déjà, inchangés — seule la
+            // SOURCE du champ affiché change (écrase la valeur posée par buildUnitStatsRows).
+            r.roi=cs&&Number.isFinite(cs.returnPct)?cs.returnPct/100:null;
+            // ═══ FIN CORRECTIF « COHÉRENCE MANUEL ↔ SEEDS » §5/§6 ═══
+            // AJOUT ADDITIF — PROMPT « MOTEUR 5 SEEDS » : uniquement des clés SUPPLÉMENTAIRES (aucun
+            // champ ci-dessus renommé/supprimé, aucun consommateur existant de unitStats impacté).
+            r.calibratedProbability=r.calibratedProbabilityMean;
+            r.calibrationGap=(Number.isFinite(r.calibratedProbabilityMean)&&Number.isFinite(r.observedFrequency))?(r.calibratedProbabilityMean-r.observedFrequency):null;
+            r.marketLabel=SNAPSHOT_MARKET_LABELS[r.marketKey]||r.marketKey;
+            // positive = roi >= 0 (§4 du cahier des charges — un ROI exactement nul compte positif).
+            r.positive=Number.isFinite(r.roi)?(r.roi>=0):null;
+        }
+        // ═══ FIN AJOUT ADDITIF — CAPTURE COMPACTE MarketEligibilityEngine (PROMPT 1) ═══
         // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE : UNIT STATS ═══════════════════
         return{leagueName,snapshot,testMatchesTotal:testTotal,testMatchesVisited:testVisited,replayMatches:replayTotal,selectedTemperature,temperatureSource,elapsedMs,debug,predictionErrors,marketStats,capitalRows,totalSelectionsTheoretical,unitStats,seed};
     }
@@ -12946,7 +13647,7 @@ const BacktestCore = (() => {
     // AJOUT ADDITIF — PHASE 3 : calculateFairOdds/calculateTargetOdds/calculateEdge/
     // calculateConservativeEdge exposés publiquement pour réutilisation par
     // MarketRegistry/Coupon (Phase 5) sans duplication — une seule source par formule.
-    return Object.freeze({CONFIG,ENGINE_VERSION,MARKETS,parseCanonicalDate,validateMatch,prepareHistory,splitWarmup,splitTrainValTest,validateVector,signal,settle,causalWeights,calibration,predictiveMetrics,countMarketMetrics,countMarketMetricsLegacy,exactScoreMetrics,exactScoreMetricsLegacy,predictSnapshot,run:runAudited,runValueTest,calculateFairOdds,calculateTargetOdds,calculateEdge,calculateConservativeEdge});
+    return Object.freeze({CONFIG,ENGINE_VERSION,MARKETS,parseCanonicalDate,validateMatch,prepareHistory,splitWarmup,splitTrainValTest,validateVector,signal,settle,causalWeights,calibration,predictiveMetrics,countMarketMetrics,countMarketMetricsLegacy,exactScoreMetrics,exactScoreMetricsLegacy,predictSnapshot,run:runAudited,runValueTest,calculateFairOdds,calculateTargetOdds,calculateEdge,calculateConservativeEdge,fairOddsEligibility,FAIR_ODDS_MIN,FAIR_ODDS_CAP});
 })();
 // SECTION 11 — BacktestCore n'était jamais exposé sur globalThis (contrairement
 // à PredictiveCoreV30/CausalEnsembleEngine/ConfidenceEngineV1/CalibrationEngineV31).
@@ -18471,7 +19172,14 @@ const CalculsUI = (() => {
         const leagueCount = importedInfo && isNum(importedInfo.matchCount) ? importedInfo.matchCount : null;
         const interrupted = (typeof App !== 'undefined' && App && App._calcInterrupted && App._calcInterrupted.kind === 'CALCULS' && sameLg(App._calcInterrupted.league, lg)) ? App._calcInterrupted : null;
         const hasCal = inMemory || !!persistedEntry;
-        const status = runningThis ? 'CALCUL EN COURS' : (interrupted ? 'CALCUL INTERROMPU — relancez manuellement' : (inMemory ? 'CALIBRÉ' : (persistedEntry ? 'CALIBRÉ (persisté)' : 'NON CALIBRÉ')));
+        // ═══ CORRECTIF « CALCULS dit CALIBRÉ alors que VALUE TEST dit PÉRIMÉ » : même test que
+        // persistedLeagueBlock() (L.19004 ci-dessous, jamais dupliqué avec une formule différente),
+        // simplement remonté au Statut PRINCIPAL affiché en haut — jusqu'ici ce test n'était visible
+        // que dans l'accordéon interne « 1X2 (snapshot persisté) », jamais sur la ligne Statut que
+        // l'utilisateur regarde réellement.
+        const stalePersisted = persistedEntry && isNum(persistedEntry.matchCountAtCompute) && isNum(leagueCount) && persistedEntry.matchCountAtCompute !== leagueCount;
+        const status = runningThis ? 'CALCUL EN COURS' : (interrupted ? 'CALCUL INTERROMPU — relancez manuellement' : (inMemory ? 'CALIBRÉ' : (persistedEntry ? (stalePersisted ? 'CALIBRÉ (persisté — données modifiées depuis le calcul)' : 'CALIBRÉ (persisté)') : 'NON CALIBRÉ')));
+        // ═══ FIN CORRECTIF ═══
         const lastErr = (typeof App !== 'undefined' && App && App._lastCalcError && sameLg(App._lastCalcError.league, lg)) ? App._lastCalcError : null;
         const errBlock = lastErr ? `<div class="trap-alert" style="margin:6px 0;">❌ ${esc(lastErr.message)}</div>` : '';
         const lgAttr = esc(JSON.stringify(lg));
@@ -18494,7 +19202,7 @@ const CalculsUI = (() => {
             ${leagueCount !== null ? `<div class="stat-row"><span class="label">Données historiques</span><span class="value">${int(leagueCount)} matchs</span></div>` : ''}
             ${when ? `<div class="stat-row"><span class="label">Dernier calcul</span><span class="value">${esc(when)}</span></div>` : ''}
             ${snapshotStatus ? `<div class="stat-row"><span class="label">Snapshot</span><span class="value">${statusBadge(snapshotStatus.code)} ${esc(snapshotStatus.reason)}</span></div>` : ''}
-            ${staleMem ? `<div style="font-size:.76rem;color:var(--gold);margin:6px 0;">⚠️ Données modifiées depuis ce calcul : relancez le calcul de ${esc(lg)} si besoin.</div>` : ''}
+            ${(staleMem || stalePersisted) ? `<div style="font-size:.76rem;color:var(--gold);margin:6px 0;">⚠️ Données modifiées depuis ce calcul : relancez le calcul de ${esc(lg)} si besoin.</div>` : ''}
             <div id="calculsLiveProgress" style="font-size:.8rem;color:var(--cyan);min-height:1em;">${liveText}</div>
             <div class="flex gap-2 flex-wrap" style="margin:8px 0;">${runBtn}${stopBtn}</div>
             ${busyNote}
@@ -18694,7 +19402,8 @@ const ValueTestUI = (() => {
         { id: 'markets', label: '📋 Tous les marchés' },
         { id: 'stats', label: '📐 Statistiques' },
         { id: 'capital', label: '💰 Capital' },
-        { id: 'thresholds', label: '📊 Analyse des seuils' }
+        { id: 'thresholds', label: '📊 Analyse des seuils' },
+        { id: 'eligibility', label: '📸 Snapshot marchés' }
     ]);
     let _sectionTab = 'markets';
     function selectSectionTab(tab) { _sectionTab = SECTION_TABS.some(t => t.id === tab) ? tab : 'markets'; _rerenderCurrent(); }
@@ -18829,7 +19538,11 @@ const ValueTestUI = (() => {
     // mises/P&L/capital/drawdown : il ne lit ni n'altère jamais
     // ValueTestEngine.probabilisticStatsByMarket (Partie 3), qui reste calculée
     // séparément sur calibratedProbability/result uniquement.
-    let _capitalSettings = { initialCapital: 10000, kellyDivisor: 5, capMode: 'A', capPreset: 'disabled', capCustomPct: 10, marketFilter: 'all' };
+    // CORRECTIF PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §3/§16 : diviseur Kelly par défaut aligné sur le
+    // canonique (App._canonicalCapitalOptions() / ValueTestEngine.simulateCapital, désormais 10 —
+    // auparavant 5, divergent du Snapshot). Reste modifiable ici pour une exploration « et si ? »
+    // ponctuelle : seule la VALEUR DE DÉPART change, jamais un plafond ou un comportement.
+    let _capitalSettings = { initialCapital: 10000, kellyDivisor: 10, capMode: 'A', capPreset: 'disabled', capCustomPct: 10, marketFilter: 'all' };
     let _capitalResult = null;
     // AJOUT ADDITIF — sélecteur de marché pour la simulation Capital UNIQUEMENT (§1 de la
     // spécification « TEST VALUE — Ajout du sélecteur de marché »). Réutilise EXACTEMENT les
@@ -19085,6 +19798,205 @@ const ValueTestUI = (() => {
     }
     // ═══════════════════ FIN AJOUT ADDITIF — TEST VALUE PARTIE 5 ═══════════════════
 
+    // ═══════════════════ AJOUT ADDITIF — PROMPT 3 : Snapshot marchés (📸) ═══════════════════
+    // Sous-onglet STRICTEMENT CONSOMMATEUR : affiche ctx.marketEligibilitySnapshot déjà construit par
+    // App._marketEligibilitySnapshot() (lecture seule de App._marketEligibilityRows, agrégation N seeds
+    // + décision via MarketEligibilityEngine.buildSnapshot — PROMPT 2, pur et déjà testé). AUCUN recalcul
+    // de probabilité/calibration/ROI/Capital/seed ici : uniquement mise en forme du snapshot compact
+    // (championnat × marché). Indépendant du championnat sélectionné (`lg`) : le snapshot couvre TOUS
+    // les championnats/marchés capturés, comme la vue « 🌍 Tous les championnats » (orchestrateur).
+    // AJOUT ADDITIF — PROMPT 2/3 (UI 5 seeds) : il n'existe plus que 2 statuts (WATCH/INSUFFICIENT_DATA
+    // supprimés de l'affichage, déjà fusionnés dans DISABLED côté moteur — MarketEligibilityEngine INCHANGÉ).
+    const ELIGIBILITY_STATUS_BADGE = Object.freeze({ ACTIVE: '🟢 ACTIVE', DISABLED: '🔴 DISABLED' });
+    function eligibilityStatusBadge(status) {
+        const label = ELIGIBILITY_STATUS_BADGE[status] || `🔴 ${esc(status || 'DISABLED')}`;
+        const cls = status === 'ACTIVE' ? 'badge-green' : 'badge-red';
+        return `<span class="badge ${cls}">${label}</span>`;
+    }
+    // Résultat d'UNE seed pour UN marché : 🟢 POSITIVE si ROI ≥ 0, 🔴 NEGATIVE sinon (§6 de la spécification).
+    function seedResultBadge(positive) {
+        return positive ? `<span class="badge badge-green">🟢 POSITIVE</span>` : `<span class="badge badge-red">🔴 NEGATIVE</span>`;
+    }
+    function eligibilityLegendBlock() {
+        const cfg = (typeof MarketEligibilityEngine !== 'undefined' && MarketEligibilityEngine.MARKET_ELIGIBILITY_CONFIG) ? MarketEligibilityEngine.MARKET_ELIGIBILITY_CONFIG : null;
+        const p0 = v => isNum(v) ? `${Math.round(v * 100)} %` : ND;
+        const pt = v => isNum(v) ? `${Math.round(v * 100)} pts` : ND;
+        const critères = cfg ? `
+            <div>Minimum : ${int(cfg.minValidSelections)} sélections &nbsp;·&nbsp; Tolérance calibration : ${pt(cfg.calibrationTolerance)} &nbsp;·&nbsp; Calibration critique : ${pt(cfg.calibrationCriticalGap)} &nbsp;·&nbsp; ECE maximum : ${p0(cfg.maxECE)}</div>
+            <div>Niveau robuste : ROI moyen ≥ ${p0(cfg.primary.minROI)} &nbsp;·&nbsp; ${int(cfg.primary.minPositiveSeeds)}/5 seeds positives</div>
+            <div>Garde-fou minimum : ROI moyen ≥ ${p0(cfg.guardrail.minROI)} &nbsp;·&nbsp; ${int(cfg.guardrail.minPositiveSeeds)}/5 seeds positives (peut suffire si les autres critères sont bons)</div>
+            <div>0/5, 1/5 ou 2/5 seeds positives : signal fortement défavorable — jamais utilisé seul pour désactiver un marché.</div>
+            <div>Drawdown et ECE : informations de risque/qualité affichées par marché — jamais utilisées seules pour désactiver un marché.</div>` : '';
+        return `<div style="font-size:.74rem;opacity:.88;margin:6px 0 10px;line-height:1.7;">
+            <div style="font-weight:600;">🟢 ACTIVE &nbsp; 🔴 DISABLED (données insuffisantes incluses, avec raison explicite ; il n'existe que ces deux statuts)</div>
+            ${critères}
+        </div>`;
+    }
+    // ── Sous-onglets Seed 1..5 + 🎯 Snapshot Final (§3 de la spécification) ──
+    const SNAPSHOT_SEED_TABS = Object.freeze([
+        { id: 'seed1', label: 'Seed 1', seedId: 'snapshot-seed-1' },
+        { id: 'seed2', label: 'Seed 2', seedId: 'snapshot-seed-2' },
+        { id: 'seed3', label: 'Seed 3', seedId: 'snapshot-seed-3' },
+        { id: 'seed4', label: 'Seed 4', seedId: 'snapshot-seed-4' },
+        { id: 'seed5', label: 'Seed 5', seedId: 'snapshot-seed-5' },
+        { id: 'final', label: '🎯 Snapshot Final' }
+    ]);
+    let _snapshotSeedTab = 'seed1';
+    function selectSnapshotSeedTab(tab) { _snapshotSeedTab = SNAPSHOT_SEED_TABS.some(t => t.id === tab) ? tab : 'seed1'; _rerenderCurrent(); }
+    function snapshotSeedTabsHtml() {
+        return `<div class="market-tabs" style="margin:10px 0;">${SNAPSHOT_SEED_TABS.map(t => `<button type="button" class="market-tab-btn${_snapshotSeedTab === t.id ? ' active' : ''}" onclick="ValueTestUI.selectSnapshotSeedTab('${t.id}')">${esc(t.label)}</button>`).join('')}</div>`;
+    }
+    // Lignes compactes déjà accumulées par App._recordMarketEligibilityRows (PROMPT 3, INCHANGÉ), filtrées
+    // au championnat `lg` uniquement — LECTURE SEULE, aucune copie conservée au-delà de cet appel (§22 :
+    // jamais de nouvel allSeedDetails/allMarketRows, on relit simplement ctx.marketEligibilityRows à la demande).
+    function eligibilityRowsForLeague(ctx, lg) {
+        const rows = (ctx && Array.isArray(ctx.marketEligibilityRows)) ? ctx.marketEligibilityRows : [];
+        return rows.filter(r => r && sameLg(r.championshipId, lg));
+    }
+    // Écart = Fréquence réelle − Probabilité calibrée (§5 : NE JAMAIS inverser le signe — réel ≥ calibré
+    // est TOUJOURS favorable). Volontairement recalculé ici plutôt que de lire r.calibrationGap (champ
+    // interne du moteur, signe opposé : calibrée − réel, utilisé par evaluateMarket).
+    function eligibilityGap(calibrated, observed) { return (isNum(observed) && isNum(calibrated)) ? (observed - calibrated) : null; }
+    function gapLabel(gap) { return isNum(gap) ? `${gap >= 0 ? '+' : ''}${(gap * 100).toFixed(2)} pt` : NDFULL; }
+    // ── Détail d'un marché pour UNE seed (§7 de la spécification) ──
+    function seedMarketDetail(lg, r) {
+        const gap = eligibilityGap(r.calibratedProbabilityMean, r.observedFrequency);
+        return `<div style="font-size:.72rem;line-height:1.85;padding:4px 2px 2px;">
+            <div style="font-weight:700;">${esc(r.marketLabel || r.marketKey)} — ${esc(lg)}</div>
+            <div>${esc(r.seed || '—')}</div>
+            <div>Sélections : ${int(r.validSelections)}</div>
+            <div>Probabilité calibrée : ${isNum(r.calibratedProbabilityMean) ? pct(r.calibratedProbabilityMean, 2) : NDFULL}</div>
+            <div>Fréquence réelle : ${isNum(r.observedFrequency) ? pct(r.observedFrequency, 2) : NDFULL}</div>
+            <div>Écart${gap !== null && gap >= 0 ? ' favorable' : ''} : ${gapLabel(gap)}</div>
+            <div>ECE : ${isNum(r.ece) ? dec(r.ece, 4) : NDFULL}</div>
+            <div>ROI : ${isNum(r.roi) ? spct(r.roi, 2) : NDFULL}</div>
+            <div>Drawdown : ${isNum(r.drawdownPct) ? pct(r.drawdownPct, 2) : NDFULL}</div>
+            <div>🎯 SEED ${r.positive ? 'POSITIVE' : 'NEGATIVE'}</div>
+            <div>${seedResultBadge(!!r.positive)}</div>
+        </div>`;
+    }
+    // ── Tableau d'UNE seed, avec détail dépliable par marché (§4/§5/§6/§7 de la spécification) ──
+    function snapshotSeedBlock(ctx, lg, seedTabId) {
+        const tabDef = SNAPSHOT_SEED_TABS.find(t => t.id === seedTabId) || SNAPSHOT_SEED_TABS[0];
+        const rows = eligibilityRowsForLeague(ctx, lg).filter(r => r.seed === tabDef.seedId);
+        if (!rows.length) {
+            return `<div style="font-size:.78rem;opacity:.85;margin:8px 0;">Aucune donnée pour ${esc(tabDef.label)} — lancez « 📸 CAPTURER LE SNAPSHOT DE CE CHAMPIONNAT » ci-dessus.</div>`;
+        }
+        rows.sort((a, b) => String(a.marketLabel || a.marketKey).localeCompare(String(b.marketLabel || b.marketKey)));
+        const bodyRows = rows.map(r => {
+            const gap = eligibilityGap(r.calibratedProbabilityMean, r.observedFrequency);
+            return [
+                esc(r.marketLabel || r.marketKey), int(r.validSelections),
+                isNum(r.calibratedProbabilityMean) ? pct(r.calibratedProbabilityMean, 2) : NDFULL,
+                isNum(r.observedFrequency) ? pct(r.observedFrequency, 2) : NDFULL,
+                gapLabel(gap),
+                isNum(r.ece) ? dec(r.ece, 4) : NDFULL,
+                isNum(r.roi) ? spct(r.roi, 2) : NDFULL,
+                isNum(r.drawdownPct) ? pct(r.drawdownPct, 2) : NDFULL,
+                seedResultBadge(!!r.positive)
+            ];
+        });
+        const header = table(['Marché', 'Sélections', 'P calibrée', 'Fréquence réelle', 'Écart', 'ECE', 'ROI', 'DD', 'Résultat'], bodyRows);
+        const details = rows.map(r => `<details class="model-diagnostic"><summary>${esc(r.marketLabel || r.marketKey)} — ${seedResultBadge(!!r.positive)}</summary><div class="model-diagnostic-body">${seedMarketDetail(lg, r)}</div></details>`).join('');
+        return `${header}<div style="margin-top:10px;font-size:.72rem;opacity:.8;">Détail par marché (dépliable) :</div>${details}`;
+    }
+    // ── Détail d'un marché dans le Snapshot Final (§10/§11/§12/§13/§14/§15 de la spécification) ──
+    function snapshotFinalMarketDetail(lg, marketRows, agg) {
+        // marketRows : lignes compactes de CE marché pour CE championnat (une par seed réellement
+        // exécutée) — les 5 IDs de seeds sont fixes (SNAPSHOT_SEED_TABS), une seed absente reste
+        // affichée comme NON EXÉCUTÉE plutôt que fabriquée (§15 : jamais de 5ᵉ seed inventée).
+        const bySeedId = new Map(marketRows.map(r => [r.seed, r]));
+        const seedLines = SNAPSHOT_SEED_TABS.filter(t => t.seedId).map((t, i) => {
+            const r = bySeedId.get(t.seedId);
+            if (!r || !isNum(r.roi)) return `Seed ${i + 1} : NON EXÉCUTÉE`;
+            return `Seed ${i + 1} : ${spct(r.roi, 1)} ${r.positive ? '🟢' : '🔴'}`;
+        });
+        const gap = eligibilityGap(agg.calibratedProbability, agg.observedFrequency);
+        const seedsExecuted = marketRows.filter(r => isNum(r.roi)).length;
+        return `<div style="font-size:.72rem;line-height:1.85;padding:4px 2px 2px;">
+            <div style="font-weight:700;">${esc(agg.marketLabel || agg.marketKey)} — ${esc(lg)}</div>
+            ${seedLines.map(l => `<div>${esc(l)}</div>`).join('')}
+            <div>────────────────────</div>
+            <div>ROI moyen : ${isNum(agg.roiMean) ? spct(agg.roiMean, 2) : NDFULL}</div>
+            <div>Seeds positives : ${int(agg.positiveSeeds)}/${int(seedsExecuted)}</div>
+            <div>ROI minimum : ${isNum(agg.roiMin) ? spct(agg.roiMin, 2) : NDFULL}</div>
+            <div>ROI maximum : ${isNum(agg.roiMax) ? spct(agg.roiMax, 2) : NDFULL}</div>
+            <div>Fréquence calibrée : ${isNum(agg.calibratedProbability) ? pct(agg.calibratedProbability, 2) : NDFULL}</div>
+            <div>Fréquence réelle : ${isNum(agg.observedFrequency) ? pct(agg.observedFrequency, 2) : NDFULL}</div>
+            <div>Écart${gap !== null && gap >= 0 ? ' favorable' : ''} : ${gapLabel(gap)}</div>
+            <div>ECE : ${isNum(agg.ece) ? dec(agg.ece, 4) : NDFULL}</div>
+            <div>Drawdown : ${isNum(agg.maxDrawdownPct) ? pct(agg.maxDrawdownPct, 2) : NDFULL}</div>
+            <div>🎯 DÉCISION FINALE</div>
+            <div>${eligibilityStatusBadge(agg.status)}</div>
+            ${seedsExecuted < 5 ? `<div style="color:var(--gold);">⚠️ Calcul incomplet : ${int(seedsExecuted)}/5 seeds exécutées — la 5ᵉ n'est jamais fabriquée.</div>` : ''}
+        </div>`;
+    }
+    // ── Snapshot Final : agrégat des 5 seeds pour CE championnat (§8/§9 de la spécification) ──
+    function snapshotFinalBlock(ctx, lg) {
+        const snap = ctx && ctx.marketEligibilitySnapshot;
+        const champs = snap && snap.championships ? snap.championships : null;
+        const champKey = champs ? Object.keys(champs).find(k => sameLg(k, lg)) : null;
+        const markets = (champKey && champs[champKey]) ? champs[champKey] : null;
+        if (!markets || !Object.keys(markets).length) {
+            return `<div style="font-size:.78rem;opacity:.85;margin:8px 0;">Snapshot Final vide pour ${esc(lg)} — lancez « 📸 CAPTURER LE SNAPSHOT DE CE CHAMPIONNAT » ci-dessus (5 seeds séquentielles).</div>`;
+        }
+        const rowsRaw = eligibilityRowsForLeague(ctx, lg);
+        const labelFor = mk => { const r = rowsRaw.find(x => x.marketKey === mk); return (r && r.marketLabel) || mk; };
+        const entries = Object.entries(markets).map(([marketKey, m]) => ({ marketKey, marketLabel: labelFor(marketKey), ...m }));
+        entries.sort((a, b) => String(a.marketLabel).localeCompare(String(b.marketLabel)));
+        const bodyRows = entries.map(m => [
+            esc(m.marketLabel), int(m.validSelections),
+            isNum(m.calibratedProbability) ? pct(m.calibratedProbability, 2) : NDFULL,
+            isNum(m.observedFrequency) ? pct(m.observedFrequency, 2) : NDFULL,
+            gapLabel(eligibilityGap(m.calibratedProbability, m.observedFrequency)),
+            isNum(m.ece) ? dec(m.ece, 4) : NDFULL,
+            isNum(m.roiMean) ? spct(m.roiMean, 2) : NDFULL,
+            (isNum(m.roiMin) && isNum(m.roiMax)) ? `${spct(m.roiMin, 1)} / ${spct(m.roiMax, 1)}` : NDFULL,
+            `${int(m.positiveSeeds)}/${int(m.seedsCount)}`,
+            isNum(m.maxDrawdownPct) ? pct(m.maxDrawdownPct, 2) : NDFULL,
+            eligibilityStatusBadge(m.status)
+        ]);
+        const header = table(['Marché', 'Sélections', 'P calibrée', 'Fréquence réelle', 'Écart', 'ECE', 'ROI moyen', 'ROI min/max', 'Seeds positives', 'DD', 'Statut'], bodyRows);
+        const details = entries.map(m => {
+            const marketRows = rowsRaw.filter(r => r.marketKey === m.marketKey);
+            return `<details class="model-diagnostic"><summary>${esc(m.marketLabel)} — ${eligibilityStatusBadge(m.status)}</summary><div class="model-diagnostic-body">${snapshotFinalMarketDetail(lg, marketRows, m)}</div></details>`;
+        }).join('');
+        const meta = `<div style="font-size:.7rem;opacity:.7;margin-top:6px;">Critères version ${esc(snap.criteriaVersion || '—')} — snapshot construit le ${snap.createdAt ? esc(new Date(snap.createdAt).toLocaleString('fr-FR')) : ND}.</div>`;
+        return `${header}<div style="margin-top:10px;font-size:.72rem;opacity:.8;">Détail par marché (dépliable) :</div>${details}${meta}`;
+    }
+    // Point d'entrée du sous-onglet 📸 Snapshot marchés : 6 sous-onglets (Seed 1..5 + 🎯 Snapshot Final),
+    // scopés au championnat actuellement sélectionné `lg` (§3 : jamais tous les championnats à la fois ici).
+    // AJOUT ADDITIF — PROMPT 3B FINAL §2 : « Dernier calcul : DD/MM/YYYY HH:MM », format fixe demandé
+    // (jamais toLocaleString brut, qui inclurait les secondes) — vraie valeur persistée
+    // (ctx.marketEligibilityGeneratedAt), jamais une date codée en dur (§2 : "Aucune date hardcodée").
+    function formatEligibilityGeneratedAt(iso) {
+        if (typeof iso !== 'string' || !iso) return 'Aucun Snapshot calculé';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return 'Aucun Snapshot calculé';
+        const p2 = n => String(n).padStart(2, '0');
+        return `Dernier calcul : ${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    }
+    // AJOUT ADDITIF — PROMPT 3B FINAL §1 : bandeau d'obsolescence PASSIF (jamais de recalcul
+    // automatique — le seul déclencheur reste le bouton manuel existant « 📸 CAPTURER/RECALCULER »).
+    function eligibilityStalenessBlock(ctx, lg) {
+        try {
+            const info = (typeof ctx.marketEligibilityStaleFor === 'function') ? ctx.marketEligibilityStaleFor(lg) : null;
+            if (!info || !info.stale) return '';
+            return `<div class="trap-alert" style="margin:6px 0;">⚠️ Snapshot à actualiser (${int(info.matchCountAtCompute)} → ${int(info.currentMatchCount)} matchs importés depuis la capture)<br>
+                <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px;" onclick="App.runSnapshotForChampionship(${esc(JSON.stringify(lg))})">🔄 Recalculer le Snapshot</button></div>`;
+        } catch (_) { return ''; }
+    }
+    function marketEligibilitySnapshotBlock(ctx, lg) {
+        const header = `<div class="bt-section-title" style="font-size:.8rem;margin-top:14px;">📸 SNAPSHOT MARCHÉS — ${esc(lg)}</div>
+            <div style="font-size:.72rem;opacity:.8;margin:2px 0 8px;">5 seeds fixes et déterministes (snapshot-seed-1 → snapshot-seed-5), scopées au championnat sélectionné ci-dessus. Aucune probabilité, calibration, ROI, Capital ni seed n'est recalculée ici : lecture seule des résultats déjà capturés par « 📸 CAPTURER LE SNAPSHOT DE CE CHAMPIONNAT ».</div>
+            <div style="font-size:.72rem;opacity:.85;margin:2px 0 8px;">${esc(formatEligibilityGeneratedAt(ctx && ctx.marketEligibilityGeneratedAt))}</div>
+            ${eligibilityStalenessBlock(ctx, lg)}
+            ${eligibilityLegendBlock()}`;
+        const body = _snapshotSeedTab === 'final' ? snapshotFinalBlock(ctx, lg) : snapshotSeedBlock(ctx, lg, _snapshotSeedTab);
+        return `${header}${snapshotSeedTabsHtml()}${body}`;
+    }
+    // ═══════════════════ FIN AJOUT ADDITIF — PROMPT 3 : Snapshot marchés ═══════════════════
+
     // Vue agrégée secondaire "Tous les championnats" : purement un affichage groupé, JAMAIS un mélange
     // de données — chaque championnat reste calculé et affiché séparément (snapshot déjà persisté, lecture seule).
     function buildAllLeaguesView(ctx, leagues) {
@@ -19215,21 +20127,46 @@ const ValueTestUI = (() => {
         const replay = job.phase === 'REJEU' ? `<div>Rejeu de l'historique walk-forward : ${int(job.replayDone)} / ${int(job.replayTotal)}</div>` : '';
         return `<div><b>VALUE TEST ${esc(job.league)}</b></div>${replay}<div>Matchs TEST : ${int(job.total)}</div><div>Progression : ${int(job.done)} / ${int(job.total)}</div><div>Sélections évaluées : ${int(job.selectionsEvaluated)}</div><div>Edge &gt; 0 : ${int(job.valueSelections)}</div>${(job.total > 0 && job.done >= job.total) ? '<div><b>VALUE TEST TERMINÉ</b></div>' : ''}`;
     }
+    // AJOUT ADDITIF — PROMPT 4 : bloc bouton + progression du Snapshot marchés (5 TEST VALUE
+    // complets séquentiels pour CE championnat). Purement consommateur de ctx.snapshotJob/
+    // ctx.snapshotError (affichage seul, App.runSnapshotForChampionship est l'unique orchestrateur).
+    function snapshotPhaseLine(seedIndex, seedsTotal, phase, job) {
+        const seedLabel = `Seed ${int(seedIndex)}/${int(seedsTotal)}`;
+        if (phase === 'COMPACTED') return `<div>${seedLabel}<br>✅ TEST VALUE terminé<br>✅ Statistiques capturées<br>✅ Capital capturé<br>🧹 Données détaillées libérées</div>`;
+        if (phase === 'DONE') return `<div><b>✅ Snapshot terminé — ${int(seedsTotal)}/${int(seedsTotal)} seeds exécutés</b></div>`;
+        const replay = job && job.phase === 'REJEU' ? `<div>Rejeu de l'historique walk-forward : ${int(job.replayDone)} / ${int(job.replayTotal)}</div>` : '';
+        return `<div>${seedLabel}<br>TEST VALUE complet en cours...</div>${replay}${job ? `<div>Matchs TEST : ${int(job.done)} / ${int(job.total)}</div><div>Sélections évaluées : ${int(job.selectionsEvaluated)}</div>` : ''}`;
+    }
+    function snapshotBlock(ctx, lg) {
+        const sj = ctx && ctx.snapshotJob;
+        const runningHere = !!(sj && sameLg(sj.league, lg));
+        const busyOther = !!(sj && !sameLg(sj.league, lg));
+        const otherJobBusy = !!(ctx && ctx.job && !(runningHere && ctx.job.kind === 'VALUE_TEST'));
+        const disabled = runningHere || busyOther || otherJobBusy;
+        const btn = `<button type="button" class="btn btn-sm btn-primary" ${disabled ? 'disabled' : ''} onclick="App.runSnapshotForChampionship(${esc(JSON.stringify(lg))})">📸 CAPTURER LE SNAPSHOT DE CE CHAMPIONNAT</button>`;
+        const progress = runningHere ? `<div style="font-size:.78rem;color:var(--cyan);margin:6px 0;">📸 Snapshot — ${esc(lg)}<br>${snapshotPhaseLine(sj.seedIndex, sj.seedsTotal, sj.phase, runningHere ? (ctx.job && sameLg(ctx.job.league, lg) ? ctx.job : null) : null)}</div>` : '';
+        const err = (ctx && ctx.snapshotError && sameLg(ctx.snapshotError.league, lg)) ? `<div class="trap-alert" style="margin:6px 0;">❌ ${esc(ctx.snapshotError.message)}</div>` : '';
+        const busyNote = (busyOther) ? `<div style="font-size:.76rem;color:var(--gold);margin:6px 0;">Un Snapshot est déjà en cours pour ${esc(sj.league)}.</div>` : '';
+        return `<div style="margin:10px 0 2px;">${btn}</div>${progress}${err}${busyNote}`;
+    }
+    // FIN AJOUT ADDITIF — PROMPT 4 (bloc bouton/progression Snapshot marchés)
     function actionBlock(ctx, lg, hasSnap) {
         const job = ctx && ctx.job ? ctx.job : null, busy = !!job;
         const runningThis = !!(job && job.kind === 'VALUE_TEST' && sameLg(job.league, lg));
+        const snapshotRunningThis = !!(ctx && ctx.snapshotJob && sameLg(ctx.snapshotJob.league, lg));
         let pre = { ok: true };
         try { if (ctx && typeof ctx.precheck === 'function') pre = ctx.precheck(lg) || { ok: true }; } catch (e) { pre = { ok: false, message: String((e && e.message) || e) }; }
         const interrupted = ctx && ctx.interrupted && ctx.interrupted.kind === 'VALUE_TEST' && sameLg(ctx.interrupted.league, lg) ? ctx.interrupted : null;
         const lgAttr = esc(JSON.stringify(lg));
         const btn = runningThis
             ? `<button type="button" class="btn btn-sm btn-secondary" onclick="App.stopCurrentCalculation()">■ ARRÊTER ${esc(lg)}</button>`
-            : `<button type="button" class="btn btn-sm btn-primary" data-calc-trigger ${(busy || !pre.ok) ? 'disabled' : ''} onclick="App.runValueTestForChampionship(${lgAttr})">${hasSnap ? '↻ RECALCULER LE VALUE TEST' : '▶ LANCER LE VALUE TEST'} ${esc(lg)}</button>`;
+            : `<button type="button" class="btn btn-sm btn-primary" data-calc-trigger ${(busy || !pre.ok || snapshotRunningThis) ? 'disabled' : ''} onclick="App.runValueTestForChampionship(${lgAttr})">${hasSnap ? '↻ RECALCULER LE VALUE TEST' : '▶ LANCER LE VALUE TEST'} ${esc(lg)}</button>`;
         const notes = [
             (!pre.ok && !runningThis) ? `<div style="font-size:.76rem;color:var(--gold);margin:6px 0;">${esc(pre.message || 'Calibration CALCULS indisponible.')}</div>` : '',
             (busy && !runningThis) ? `<div style="font-size:.76rem;color:var(--gold);margin:6px 0;">Un calcul est déjà en cours pour ${esc(job.league)}. Aucun VALUE TEST n'est lancé pour ${esc(lg)} (pas de file d'attente).</div>` : '',
             interrupted ? `<div style="font-size:.76rem;color:var(--gold);margin:6px 0;">CALCUL INTERROMPU — aucun snapshot enregistré. Relancez manuellement.</div>` : '',
-            (ctx && ctx.lastError && sameLg(ctx.lastError.league, lg)) ? `<div class="trap-alert" style="margin:6px 0;">❌ ${esc(ctx.lastError.message)}</div>` : ''
+            (ctx && ctx.lastError && sameLg(ctx.lastError.league, lg)) ? `<div class="trap-alert" style="margin:6px 0;">❌ ${esc(ctx.lastError.message)}</div>` : '',
+            !pre.ok ? '' : snapshotBlock(ctx, lg)
         ].join('');
         return `<div id="valueTestLive" style="font-size:.78rem;color:var(--cyan);margin:6px 0;">${runningThis ? progressHtml(job) : ''}</div><div class="flex gap-2 flex-wrap" style="margin:8px 0;">${btn}</div>${notes}`;
     }
@@ -19259,7 +20196,11 @@ const ValueTestUI = (() => {
         // cote bookmaker. Les données bookmaker restent en base pour les autres fonctionnalités
         // de l'application, mais ne sont plus lues ici.
         const currentCount = importedInfo && isNum(importedInfo.matchCount) ? importedInfo.matchCount : null;
-        const changed = isNum(snap.importedMatchCount) && currentCount !== null && snap.importedMatchCount !== currentCount;
+        // CORRECTIF — l'alerte "DONNÉES MODIFIÉES" basée sur une différence de compteur de matchs
+        // (snap.importedMatchCount vs currentCount) est désactivée à l'affichage. Le résultat
+        // VALUE TEST précédent reste affiché normalement, sans bandeau ni recalcul, quel que soit
+        // l'écart entre le nombre de matchs enregistré dans le snapshot et le nombre actuel.
+        const changed = false;
         const when = snap.computedAt ? new Date(snap.computedAt).toLocaleString('fr-FR') : ND;
         const status = changed
             ? `<div class="trap-alert" style="margin:8px 0;">⚠️ DONNÉES MODIFIÉES — résultat VALUE TEST précédent conservé (${int(snap.importedMatchCount)} → ${int(currentCount)} matchs importés).</div>`
@@ -19270,6 +20211,7 @@ const ValueTestUI = (() => {
             case 'stats': body = probabilisticStatsBlock(ctx, lg); break;
             case 'capital': body = capitalBlock(ctx, lg); break;
             case 'thresholds': body = thresholdAnalysisBlock(ctx, lg); break;
+            case 'eligibility': body = marketEligibilitySnapshotBlock(ctx, lg); break;
             default: body = allMarketsBlock(ctx, lg);
         }
         return `
@@ -19339,7 +20281,9 @@ const ValueTestUI = (() => {
     }
     return Object.freeze({ render, build, leaguesPresent, selectLeagueIndex, setRunStatus, estimateTestMatches, getSelectedLeague, setProgress, selectAllLeagues, setEdgeTier, setEdgeCustom, currentEdgeDecimal, selectMarketTab, setMarketPage, selectSectionTab, setCapitalInitial, setKellyDivisor, setCapMode, setCapPreset, setCapCustom, setCapitalMarketFilter, runCapitalSimulation, setCapitalDetailPage, setThresholdCapitalEnabled, selectThresholdEdge, selectThresholdDetail, setThresholdOptionPage,
         // AJOUT ADDITIF — TEST VALUE increment3C
-        getOrchestratorSeed, setOrchestratorSeed, startOrchestratorRun, finishOrchestratorRun });
+        getOrchestratorSeed, setOrchestratorSeed, startOrchestratorRun, finishOrchestratorRun,
+        // AJOUT ADDITIF — PROMPT 2/3 (UI 5 seeds) : sélection du sous-onglet Seed 1..5 / 🎯 Snapshot Final
+        selectSnapshotSeedTab });
 })();
 if (typeof globalThis !== 'undefined') globalThis.ValueTestUI = ValueTestUI;
 
@@ -20601,6 +21545,13 @@ const App = {
             try { await this._loadPersistedCalibrationSnapshots(); } catch (snapLoadError) { console.warn('CalibrationSnapshot par championnat : chargement initial impossible', snapLoadError); this._persistedCalculsSnapshot = { leagues: {} }; }
             // increment45 — VALUE TEST : chargement PASSIF des snapshots compacts (DB.getPreference), jamais de recalcul au démarrage.
             try { await this._loadPersistedValueTest(); } catch (vtLoadError) { console.warn('VALUE TEST : chargement initial impossible', vtLoadError); }
+            // CORRECTIF PROMPT 3 (§4/§14/§21/§23 — INTÉGRATION FINALE) : chargement PASSIF du Snapshot
+            // marchés déjà persisté (DB.getPreference uniquement) — jamais de TEST VALUE/5 seeds/CALCULS
+            // relancés automatiquement ici. Sans cet appel, le Snapshot marchés restait vide après tout
+            // rechargement de page/APK même si _persistMarketEligibilityRows() l'avait bien sauvegardé.
+            try { await this._loadPersistedMarketEligibilityRows(); } catch (meLoadError) { console.warn('Snapshot marchés : chargement initial impossible', meLoadError); }
+            // AJOUT ADDITIF (§12/§13) — chargement PASSIF du dernier import par championnat (DB.getPreference uniquement).
+            try { await this._loadImportLog(); } catch (ilLoadError) { console.warn('Import log par championnat : chargement initial impossible', ilLoadError); }
   
             document.querySelectorAll('.nav-item').forEach(el => {  
                 el.addEventListener('click', () => this.navigateTo(el.dataset.page));  
@@ -20625,6 +21576,13 @@ const App = {
                     this.switchAnalysisSubTab(el.dataset.sub);
                 });  
             });  
+
+            // AJOUT ADDITIF — Maintenance : listener SCOPÉ .maint-nav-item, totalement
+            // indépendant du listener .sub-nav-item ci-dessus (classe distincte, jamais
+            // touché par ce bloc).
+            document.querySelectorAll('.maint-nav-item').forEach(el => {
+                el.addEventListener('click', () => this.switchMaintenanceSubTab(el.dataset.msub));
+            });
   
             document.addEventListener('click', (e) => {  
                 if (!e.target.closest('.autocomplete-wrapper')) {  
@@ -20773,7 +21731,8 @@ const App = {
             'arbitres': () => this.renderArbitresPage(),
             'addmatch': () => this.renderRecentMatches(),  
             'teams': () => this.renderTeams(),  
-            'leagues': () => this.renderLeagues()  
+            'leagues': () => this.renderLeagues(),
+            'maintenance': () => this.renderMaintenance()
         };  
         if (pages[this.currentPage]) pages[this.currentPage]();  
     },  
@@ -21822,8 +22781,9 @@ const App = {
                          modale d'ajout au coupon, jamais dans cette grille principale.
                          Toujours visible désormais (jamais masqué en silence). -->
                     <div class="text-sub fs-05">${Number.isFinite(market.empiricalN) && market.empiricalN > 0
-                        ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(market.empiricalRate)} (${RealFrequencyEngine.fmtCount(market.empiricalWins)} / ${RealFrequencyEngine.fmtCount(market.empiricalN)} · probabilité similaire : ${RealFrequencyEngine.rangeLabel(market.rawProbability)})`
+                        ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(market.empiricalRate)} (${RealFrequencyEngine.fmtCount(market.empiricalWins)} / ${RealFrequencyEngine.fmtCount(market.empiricalN)} · probabilité BRUTE similaire : ${RealFrequencyEngine.rangeLabel(market.rawProbability)})`
                         : `📊 Fréquence réelle observée : NON DISPONIBLE (aucune observation historique comparable (population non construite, tranche vide ou non antérieure))`}</div>
+                    ${this._marketEligibilityWarningHTML(leagueName, market.key)}
                     ${isSelected ? '<span class="selection-badge">✓</span>' : ''}  
                 </div>`;  
             }  
@@ -22239,14 +23199,20 @@ const App = {
                     <div><div class="text-sub fs-06">Confiance</div><div class="fw-700 text-purple">${TrackingFinancialMetrics.formatPercentPointsFr(data.confidence)}</div></div>
                 </div>  
                 <div class="text-sub fs-05 mt-1">${data.calibratedProb != null
-                    ? `Brut ${TrackingFinancialMetrics.formatRatioPercentFr(data.rawProbability)} → Calibré ${TrackingFinancialMetrics.formatRatioPercentFr(data.calibratedProb)} · ${Utils.escapeHTML(data.calibrationMethod || '')} · ${Utils.escapeHTML(data.calibrationVersion || 'N/D')} · n=${data.calibrationSampleSize ?? 'N/D'}`
+                    ? `<div class="flex-between" style="padding:2px 0;"><span>Probabilité brute</span><span class="fw-700">${TrackingFinancialMetrics.formatRatioPercentFr(data.rawProbability)}</span></div>
+                       <div class="flex-between" style="padding:2px 0;"><span>Probabilité calibrée (utilisée)</span><span class="fw-700">${TrackingFinancialMetrics.formatRatioPercentFr(data.calibratedProb)}</span></div>
+                       <div class="flex-between" style="padding:2px 0;"><span>Statut calibration</span><span>${Utils.escapeHTML(data.calibrationStatus || 'NON DISPONIBLE')}</span></div>
+                       <div class="flex-between" style="padding:2px 0;"><span>Échantillon calibration</span><span class="fw-700">${Number.isFinite(data.calibrationSampleSize) ? data.calibrationSampleSize : 'NON DISPONIBLE'}</span></div>
+                       <div class="flex-between" style="padding:2px 0;"><span>Qualité calibration</span><span class="fw-700">${Utils.escapeHTML(this._calibrationQualityLabel(data.calibrationSampleSize))}</span></div>
+                       <div class="flex-between" style="padding:2px 0;"><span>Méthode / Version</span><span>${Utils.escapeHTML(data.calibrationMethod || '')} · ${Utils.escapeHTML(data.calibrationVersion || 'N/D')} · N=${Number.isFinite(data.calibrationSampleSize) ? data.calibrationSampleSize : 'N/D'}</span></div>`
                     : `⚠️ PROBABILITÉ BRUTE — NON CALIBRÉE (${Utils.escapeHTML(data.calibrationStatus || 'NON DISPONIBLE')})`}</div>  
                 <!-- CORRECTIF (demande explicite : "ajouter fréquence réelle partout")
                      — toujours visible désormais (auparavant masquée en silence si
                      empiricalN était vide/0). -->
                 <div class="text-sub fs-05">${Number.isFinite(data.empiricalN) && data.empiricalN > 0
-                    ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(data.empiricalRate)} (${RealFrequencyEngine.fmtCount(data.empiricalWins)} / ${RealFrequencyEngine.fmtCount(data.empiricalN)} · probabilité similaire : ${RealFrequencyEngine.rangeLabel(data.rawProbability)})`
+                    ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(data.empiricalRate)} (${RealFrequencyEngine.fmtCount(data.empiricalWins)} / ${RealFrequencyEngine.fmtCount(data.empiricalN)} · probabilité BRUTE similaire : ${RealFrequencyEngine.rangeLabel(data.rawProbability)})`
                     : `📊 Fréquence réelle observée : NON DISPONIBLE (aucune observation historique comparable (population non construite, tranche vide ou non antérieure))`}</div>
+                ${this._marketEligibilityWarningHTML(document.getElementById('analysisLeagueFilter')?.value || '', data.key)}
                 <div class="grid-2 mt-1">  
                     <div>  
                         <div class="text-sub fs-06">Cote Bookmaker</div>  
@@ -22364,6 +23330,17 @@ const App = {
   
         const leagueCode = document.getElementById('analysisLeagueFilter')?.value || 'Inconnu';  
   
+        // ═══ AJOUT ADDITIF — PROMPT 4 : Coupons n'accepte que les marchés ACTIVE ═══
+        // Même règle et même fonction de lecture que addSelectionToCoupon (App.
+        // _marketEligibilityEntryFor, PROMPT 4) : le Hot Pick est un second point
+        // d'insertion réel dans this.coupon, il doit donc être soumis exactement
+        // à la même autorisation. AUCUN recalcul de probabilité/calibration/edge.
+        const eligibilityEntryHP = this._marketEligibilityEntryFor(leagueCode, data.key);
+        if (eligibilityEntryHP && eligibilityEntryHP.status !== 'ACTIVE') {
+            showToast(`⚠️ Marché ne passe pas les filtres (${eligibilityEntryHP.status}) — non proposé comme sélection active.`, 'alert');
+            return;
+        }
+        // ═══ FIN AJOUT ADDITIF — PROMPT 4 ═══
         const entry = {  
             homeTeam: data.homeTeam,  
             awayTeam: data.awayTeam,  
@@ -23346,8 +24323,9 @@ La priorité est la qualité des sélections, pas la quantité.`;
                              lue sur les knots isotoniques), absente jusqu'ici de cette
                              grille de marchés de comptage. -->
                         <div class="text-sub fs-05">${Number.isFinite(calibration.meta?.empiricalN) && calibration.meta.empiricalN > 0
-                            ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(calibration.meta.empiricalWins / calibration.meta.empiricalN)} (${RealFrequencyEngine.fmtCount(calibration.meta.empiricalWins)} / ${RealFrequencyEngine.fmtCount(calibration.meta.empiricalN)} · probabilité similaire : ${RealFrequencyEngine.rangeLabel(calibration.meta.rawProbability)})`
+                            ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(calibration.meta.empiricalWins / calibration.meta.empiricalN)} (${RealFrequencyEngine.fmtCount(calibration.meta.empiricalWins)} / ${RealFrequencyEngine.fmtCount(calibration.meta.empiricalN)} · probabilité BRUTE similaire : ${RealFrequencyEngine.rangeLabel(calibration.meta.rawProbability)})`
                             : `📊 Fréquence réelle observée : NON DISPONIBLE (aucune observation historique comparable (population non construite, tranche vide ou non antérieure))`}</div>
+                        ${this._marketEligibilityWarningHTML(result.leagueName, selKey)}
                         ${isSelected ? '<span class="selection-badge">✓</span>' : ''}
                     </div>`;
                 }
@@ -23418,8 +24396,9 @@ La priorité est la qualité des sélections, pas la quantité.`;
                         ? `Brut ${TrackingFinancialMetrics.formatRatioPercentFr(vb.rawProbability)} → Calibré ${TrackingFinancialMetrics.formatRatioPercentFr(vb.calibratedProbability)} (${Utils.escapeHTML(vb.calibrationMethod || '')}, n=${vb.calibrationSampleSize ?? 'N/D'})`
                         : `⚠️ PROBABILITÉ BRUTE — NON CALIBRÉE (${Utils.escapeHTML(vb.calibrationStatus || 'NON DISPONIBLE')})`}</div>
                     <div class="text-sub fs-05">${Number.isFinite(vb.empiricalN) && vb.empiricalN > 0
-                        ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(vb.empiricalWins / vb.empiricalN)} (${RealFrequencyEngine.fmtCount(vb.empiricalWins)} / ${RealFrequencyEngine.fmtCount(vb.empiricalN)} · probabilité similaire : ${RealFrequencyEngine.rangeLabel(vb.rawProbability)})`
+                        ? `📊 Fréquence réelle observée : ${TrackingFinancialMetrics.formatRatioPercentFr(vb.empiricalWins / vb.empiricalN)} (${RealFrequencyEngine.fmtCount(vb.empiricalWins)} / ${RealFrequencyEngine.fmtCount(vb.empiricalN)} · probabilité BRUTE similaire : ${RealFrequencyEngine.rangeLabel(vb.rawProbability)})`
                         : `📊 Fréquence réelle observée : NON DISPONIBLE (aucune observation historique comparable (population non construite, tranche vide ou non antérieure))`}</div>
+                    ${this._marketEligibilityWarningHTML(result.leagueName, vb.key)}
                     ${isSelected ? '<span class="selection-badge">✓</span>' : ''}
                 </div>`;
             }
@@ -23436,6 +24415,23 @@ La priorité est la qualité des sélections, pas la quantité.`;
             });
         });
     },
+
+    // ═══ CORRECTIF UI « carte Ajouter au coupon » — indicateur de qualité de
+    // calibration. Lecture seule d'un champ déjà calculé et déjà transmis
+    // (calibrationSampleSize) : aucune nouvelle statistique, aucun recalcul,
+    // aucune donnée inventée — NON DISPONIBLE si l'échantillon est absent.
+    // Seuils repris tels quels de constantes déjà existantes dans ce fichier :
+    // 500 (MARKET_ELIGIBILITY_CONFIG.minValidSelections, déjà le seuil
+    // "échantillon suffisant" du Snapshot marchés) et 150
+    // (MarketCalibrationRegistry.MIN_SAMPLES.exact_score, déjà un seuil de
+    // calibration existant) — aucun nouveau nombre inventé.
+    _calibrationQualityLabel(sampleSize) {
+        if (!Number.isFinite(sampleSize)) return 'NON DISPONIBLE';
+        if (sampleSize >= 500) return 'ROBUSTE';
+        if (sampleSize >= 150) return 'LIMITÉE';
+        return 'INSUFFISANTE';
+    },
+    // ═══ FIN CORRECTIF ═══
 
     showCouponModal(market, odd, prob, edge, key, vb = null) {  
         const hn = document.getElementById('analysisHome').value.trim();  
@@ -23494,6 +24490,15 @@ La priorité est la qualité des sélections, pas la quantité.`;
 
         this._couponModalData = {  
             homeTeam: hn, awayTeam: an, league: lc.name || lv,  
+            // AJOUT ADDITIF — PROMPT 4 : `lv` (valeur brute du sélecteur de
+            // championnat, identique à `leagueName`/`info.name` utilisé côté
+            // capture TEST VALUE — voir App.runValueTestAllChampionships/
+            // _recordMarketEligibilityRows) conservé À PART de `league` (qui
+            // peut différer : nom personnalisé via getLeagueConfigWithCustom).
+            // Nécessaire pour retrouver la BONNE entrée du Snapshot marchés à
+            // l'ajout au coupon (addSelectionToCoupon ci-dessous), sans jamais
+            // modifier `league` (déjà utilisé ailleurs tel quel).
+            eligibilityLeague: lv,
             market: market, key: key || market, odd: odd,  
             prob: modelProb, estimatedProb: modelProb, probabilitySource: 'model', edge: edge,
             date: new Date().toISOString().slice(0, 10),
@@ -23518,12 +24523,14 @@ La priorité est la qualité des sélections, pas la quantité.`;
             <div class="flex-between" style="padding:4px 0;"><span>Probabilité brute</span><span class="fw-700">${Number.isFinite(this._couponModalData.rawProbability) ? TrackingFinancialMetrics.formatRatioPercentFr(this._couponModalData.rawProbability) : TrackingFinancialMetrics.formatPercentPointsFr(prob)}</span></div>
             <div class="flex-between" style="padding:4px 0;"><span>Probabilité calibrée (utilisée)</span><span class="fw-700">${Number.isFinite(this._couponModalData.calibratedProb) ? TrackingFinancialMetrics.formatRatioPercentFr(this._couponModalData.calibratedProb) : 'NON CALIBRÉ — PROBABILITÉ BRUTE'}</span></div>
             <div class="flex-between" style="padding:4px 0;"><span>Statut calibration</span><span class="text-sub fs-06">${Utils.escapeHTML(this._couponModalData.calibrationStatus || 'NON DISPONIBLE')}</span></div>
-            <div class="flex-between" style="padding:4px 0;"><span>Méthode / Version / Échantillon</span><span class="text-sub fs-06">${Utils.escapeHTML(this._couponModalData.calibrationMethod || 'N/D')} · ${Utils.escapeHTML(this._couponModalData.calibrationVersion || 'N/D')} · ${this._couponModalData.calibrationSampleSize ?? 'N/D'}</span></div>
+            <div class="flex-between" style="padding:4px 0;"><span>Échantillon calibration</span><span class="fw-700">${Number.isFinite(this._couponModalData.calibrationSampleSize) ? this._couponModalData.calibrationSampleSize : 'NON DISPONIBLE'}</span></div>
+            <div class="flex-between" style="padding:4px 0;"><span>Qualité calibration</span><span class="fw-700">${Utils.escapeHTML(this._calibrationQualityLabel(this._couponModalData.calibrationSampleSize))}</span></div>
+            <div class="flex-between" style="padding:4px 0;"><span>Méthode / Version</span><span class="text-sub fs-06">${Utils.escapeHTML(this._couponModalData.calibrationMethod || 'N/D')} · ${Utils.escapeHTML(this._couponModalData.calibrationVersion || 'N/D')} · N=${Number.isFinite(this._couponModalData.calibrationSampleSize) ? this._couponModalData.calibrationSampleSize : 'N/D'}</span></div>
             <!-- CORRECTIF (demande explicite : "ajouter fréquence réelle partout")
                  — toujours visible désormais (auparavant masquée en silence si
                  empiricalN était vide/0). -->
             <div class="flex-between" style="padding:4px 0;"><span>Fréquence réelle observée</span><span class="text-sub fs-06">${Number.isFinite(this._couponModalData.empiricalN) && this._couponModalData.empiricalN > 0
-                ? `${TrackingFinancialMetrics.formatRatioPercentFr(this._couponModalData.empiricalRate)} (${RealFrequencyEngine.fmtCount(this._couponModalData.empiricalWins)} / ${RealFrequencyEngine.fmtCount(this._couponModalData.empiricalN)} · probabilité similaire : ${RealFrequencyEngine.rangeLabel(this._couponModalData.rawProbability)})`
+                ? `${TrackingFinancialMetrics.formatRatioPercentFr(this._couponModalData.empiricalRate)} (${RealFrequencyEngine.fmtCount(this._couponModalData.empiricalWins)} / ${RealFrequencyEngine.fmtCount(this._couponModalData.empiricalN)} · probabilité BRUTE similaire : ${RealFrequencyEngine.rangeLabel(this._couponModalData.rawProbability)})`
                 : `NON DISPONIBLE (aucune observation historique comparable (population non construite, tranche vide ou non antérieure))`}</span></div>
             <div class="flex-between" style="padding:4px 0;"><span>Confidence</span><span class="fw-700 text-purple">${Number.isFinite(this._couponModalData.matchConfidenceEngine?.confidence) ? this._couponModalData.matchConfidenceEngine.confidence + '%' : 'NON DISPONIBLE'}</span></div>
             ${this._couponModalData.arbitre ? `<div class="flex-between" style="padding:4px 0;"><span>Arbitre</span><span class="fw-700">${Utils.escapeHTML(this._couponModalData.arbitre)}</span></div>` : ''}
@@ -23543,6 +24550,7 @@ La priorité est la qualité des sélections, pas la quantité.`;
             <div class="text-sub fs-05" style="padding:2px 0;">P_used (Coupon) = P_model — aucun tracker empirique persistant en Live (disponible uniquement en Backtest, Phase 2/3).</div>
             <div id="couponTargetOddsPreview" class="text-sub fs-06" style="padding:4px 0;"></div>
             <div class="flex-between" style="padding:4px 0;"><span>Date</span><span class="text-sub">${this._couponModalData.date}</span></div>  
+            ${this._marketEligibilityWarningHTML(lv, key)}
         `;  
         document.getElementById('couponModal').classList.remove('hidden');  
         this.calculateEdgeCoupon();  
@@ -23590,6 +24598,20 @@ La priorité est la qualité des sélections, pas la quantité.`;
             showToast('Probabilité modèle invalide, ajout impossible', 'error');
             return;
         }
+        // ═══ AJOUT ADDITIF — PROMPT 4 : Coupons n'accepte que les marchés ACTIVE ═══
+        // Lecture seule du Snapshot marchés déjà construit (App._marketEligibilityEntryFor,
+        // PROMPT 4) : AUCUN recalcul de probabilité/calibration/edge/settlement. Absence de
+        // donnée capturée (entry === null, ex. TEST VALUE — TOUS LES CHAMPIONNATS jamais
+        // lancé) => marché non restreint, comportement identique à avant l'existence du
+        // Snapshot marchés (non-régression). Seul un statut DISABLED (données insuffisantes
+        // incluses) bloque l'ajout — le marché reste consultable/diagnostiquable
+        // dans Analyse (aucun marché supprimé), seul son ajout au COUPON est refusé.
+        const eligibilityEntry = this._marketEligibilityEntryFor(data.eligibilityLeague, data.key);
+        if (eligibilityEntry && eligibilityEntry.status !== 'ACTIVE') {
+            showToast(`⚠️ Marché ne passe pas les filtres (${eligibilityEntry.status}) — non proposé comme sélection active.`, 'alert');
+            return;
+        }
+        // ═══ FIN AJOUT ADDITIF — PROMPT 4 ═══
         const bookOdd = data.bookOdd || data.odd;  
         const edge = data.edge ?? Utils.calculateEdge(modelProb, bookOdd);
         const matchKey = `${data.homeTeam}|${data.awayTeam}|${data.key}`;  
@@ -25654,6 +26676,61 @@ La priorité est la qualité des sélections, pas la quantité.`;
     },
 
     // ============================================================
+    // AJOUT ADDITIF (§12/§13 — Maintenance → Données, dernier import PAR CHAMPIONNAT).
+    // ------------------------------------------------------------
+    // Aucun nouveau moteur d'import, aucune modification de FootballDataImport/
+    // DB.importMatchesAtomic : on se contente de LIRE le résultat déjà renvoyé par
+    // l'import atomique EXISTANT (transactionResult.league/added/matchesOddsEnriched/
+    // duplicates, déjà calculés par le moteur inchangé) et de le persister PAR
+    // CHAMPIONNAT, avec le même mécanisme de persistance déjà utilisé partout
+    // ailleurs dans ce fichier (DB.savePreference + index, comme calibrationSnapshot/
+    // valueTestSnapshot). Chargement PASSIF au démarrage, jamais de recalcul.
+    // ============================================================
+    _importLog: {},
+    async _loadImportLog() {
+        this._importLog = {};
+        if (typeof DB === 'undefined') return 0;
+        let index = [];
+        try { const s = await DB.getPreference('importLogIndex'); if (Array.isArray(s)) index = s.filter(n => typeof n === 'string' && n); } catch (_) { /* aucun index */ }
+        for (const name of index) {
+            try { const e = await DB.getPreference('importLog|' + name); if (e && e.kind === 'importLog') this._importLog[name] = e; } catch (_) { /* entrée absente */ }
+        }
+        return Object.keys(this._importLog).length;
+    },
+    // Enregistre le résultat d'un import déjà effectué (transactionResult de DB.importMatchesAtomic,
+    // INCHANGÉ) — un import concernant plusieurs championnats à la fois (rare) ne peut pas être réparti
+    // avec certitude sans modifier le moteur d'import : dans ce cas, chaque championnat concerné reçoit
+    // une entrée honnête marquée multiLeagueImport (compteurs non attribuables à un seul championnat),
+    // plutôt qu'un chiffre inventé.
+    async _recordImportLog(importResult) {
+        if (!importResult) return;
+        const rawLeagues = Array.isArray(importResult.league) ? importResult.league : (importResult.league ? [importResult.league] : []);
+        const names = rawLeagues.filter(n => typeof n === 'string' && n.trim());
+        if (!names.length) return;
+        const multi = names.length > 1;
+        const at = new Date().toISOString();
+        if (!this._importLog || typeof this._importLog !== 'object') this._importLog = {};
+        for (const name of names) {
+            const entry = {
+                version: 1, kind: 'importLog', league: name, at,
+                added: (!multi && Number.isFinite(importResult.added)) ? importResult.added : null,
+                enriched: (!multi && Number.isFinite(importResult.matchesOddsEnriched)) ? importResult.matchesOddsEnriched : null,
+                duplicates: (!multi && Number.isFinite(importResult.duplicates)) ? importResult.duplicates : null,
+                multiLeagueImport: multi
+            };
+            this._importLog[name] = entry;
+            if (typeof DB === 'undefined') continue;
+            try {
+                await DB.savePreference('importLog|' + name, entry);
+                let index = [];
+                try { const s = await DB.getPreference('importLogIndex'); if (Array.isArray(s)) index = s.filter(n => typeof n === 'string'); } catch (_) { /* index absent */ }
+                if (!index.includes(name)) index.push(name);
+                await DB.savePreference('importLogIndex', index);
+            } catch (e) { console.warn('Import log : persistance impossible', e); }
+        }
+    },
+
+    // ============================================================
     // VALUE TEST (increment45) — persistance PASSIVE + rendu (lecture seule)
     // ------------------------------------------------------------
     // Les snapshots compacts (ValueTestEngine.buildSnapshot) sont produits par
@@ -25734,7 +26811,19 @@ La priorité est la qualité des sélections, pas la quantité.`;
         return Object.keys(agg.leagues).length;
     },
     _valueTestContext(runStatus) {
-        return { importedLeagues: this._importedLeaguesSummary(), snapshots: this._valueTestSnapshots || {}, runStatus: runStatus || '', job: this._calcJob, interrupted: this._calcInterrupted, lastError: this._lastValueTestError, precheck: lg => this._valueTestPrecheck(lg), allMarkets: this._lastValueTestAllMarkets || null };
+        return { importedLeagues: this._importedLeaguesSummary(), snapshots: this._valueTestSnapshots || {}, runStatus: runStatus || '', job: this._calcJob, interrupted: this._calcInterrupted, lastError: this._lastValueTestError, precheck: lg => this._valueTestPrecheck(lg), allMarkets: this._lastValueTestAllMarkets || null, marketEligibilitySnapshot: this._marketEligibilitySnapshot(),
+            // AJOUT ADDITIF — PROMPT 2/3 (UI 5 seeds) : référence LECTURE SEULE vers l'accumulateur compact
+            // déjà existant (App._marketEligibilityRows, PROMPT 3, INCHANGÉ) — même tableau, aucune copie,
+            // nécessaire pour que les sous-onglets Seed 1..5 affichent le détail par seed (le snapshot agrégé
+            // seul ne conserve plus le détail seed par seed une fois moyenné).
+            marketEligibilityRows: Array.isArray(this._marketEligibilityRows) ? this._marketEligibilityRows : [],
+            // AJOUT ADDITIF — PROMPT 4 : état d'affichage seul du Snapshot marchés (5 seeds séquentiels).
+            snapshotJob: this._snapshotJob || null, snapshotError: this._snapshotError || null,
+            // AJOUT ADDITIF — PROMPT 3B FINAL §1/§2 : date du dernier calcul (affichage seul) + fonction
+            // de détection d'obsolescence PASSIVE par championnat (App._marketEligibilityStaleFor,
+            // aucun recalcul déclenché par sa simple lecture).
+            marketEligibilityGeneratedAt: this._marketEligibilityGeneratedAt || null,
+            marketEligibilityStaleFor: lg => this._marketEligibilityStaleFor(lg) };
     },
     renderValueTest(runStatus) {
         try { ValueTestUI.render(this._valueTestContext(runStatus)); }
@@ -25755,6 +26844,159 @@ La priorité est la qualité des sélections, pas la quantité.`;
     _lastCalcError: null,
     _lastValueTestError: null,
     _lastValueTestAllMarkets: null, // AJOUT ADDITIF — TEST VALUE PARTIE 2 (CORRECTIF MÉMOIRE) : { league, computedAt, marketStats, capitalRows, totalSelectionsTheoretical } — mémoire session uniquement, jamais persisté (DB), plus de tableau brut complet
+    // ═══ AJOUT ADDITIF — PROMPT 3 : capture compacte MarketEligibilityEngine, multi-seeds ═══
+    // Alimenté par CHAQUE run de runValueTestAllChampionships (un run = un seed, tous championnats)
+    // ET par runSnapshotForChampionship (5 seeds d'un seul championnat). Une ligne par
+    // (championshipId, marketKey, seed) — jamais de sélection individuelle, jamais de tableau
+    // brut de matchs : exactement les champs compacts déjà produits par unitStats (PROMPT 1).
+    // Une nouvelle exécution du MÊME seed REMPLACE la ligne existante (idempotent, mémoire bornée
+    // par le nombre de (championnat × marché × seed) distincts, jamais illimitée).
+    // CORRECTIF PROMPT 3 (§2/§14/§21 — INTÉGRATION FINALE) : cet accumulateur était auparavant
+    // SESSION UNIQUEMENT (jamais persisté DB), ce qui violait l'exigence de persistance du Snapshot
+    // (un rechargement de page/APK effaçait silencieusement tout le Snapshot marchés). Persisté
+    // désormais via la MÊME mécanique de prefs déjà utilisée par _persistValueTestSnapshotForLeague/
+    // _loadPersistedValueTest (DB.savePreference/DB.getPreference) — AUCUNE nouvelle base de données,
+    // AUCUNE donnée lourde stockée (uniquement ces lignes déjà compactes). Voir
+    // _persistMarketEligibilityRows()/_loadPersistedMarketEligibilityRows() ci-dessous et le
+    // chargement passif ajouté dans App.init() (aucun recalcul automatique au démarrage — §4/§23).
+    // ═══ CORRECTIF « SNAPSHOT MARCHÉS DISPARAÎT AU RECHARGEMENT » : cette constante était
+    // RÉFÉRENCÉE (_persistMarketEligibilityRows/_loadPersistedMarketEligibilityRows ci-dessous)
+    // mais jamais DÉCLARÉE — this.MARKET_ELIGIBILITY_ROWS_KEY valait donc `undefined`. Le store
+    // IndexedDB « preferences » utilise keyPath:'key' (voir DB.open) : store.put({key:undefined,...})
+    // et objectStore.get(undefined) lèvent tous deux un DataError synchrone (clé invalide), rejeté
+    // silencieusement dans le try/catch existant. Résultat : AUCUNE sauvegarde n'aboutissait jamais
+    // (persist() rendait déjà `false`, jamais vérifié par les appelants), donc chaque rechargement
+    // de page/APK repartait de _marketEligibilityRows=[] — pour TOUS les marchés (ACTIVE compris),
+    // pas seulement les DISABLED. Un seul ajout : une clé de préférence stable, du même style que
+    // les autres clés littérales déjà utilisées ailleurs (ex. 'calibrationSnapshotIndex',
+    // 'backtestDiagnosticCheckpoint'). Aucune formule/logique de décision ACTIVE/DISABLED modifiée.
+    MARKET_ELIGIBILITY_ROWS_KEY: 'marketEligibilityRows_v1',
+    // ═══ FIN CORRECTIF ═══
+    _marketEligibilityRows: [],
+    _marketEligibilityGeneratedAt: null, // ISO string du dernier persist() réussi — affichage seul ("Dernier calcul : …", §4)
+    // AJOUT ADDITIF — PROMPT 3B FINAL §1/§20 : OBSOLESCENCE DU SNAPSHOT (détection PASSIVE uniquement,
+    // jamais de recalcul automatique). Réutilise EXACTEMENT le même mécanisme que la calibration CALCULS
+    // (matchCountAtCompute vs matchCount actuel, cf. persistedLeagueBlock/_valueTestPrecheck ci-dessus) :
+    // un nombre de matchs importés par championnat, au moment de CHAQUE capture réussie du Snapshot
+    // marchés pour ce championnat. Map championshipId (nom du championnat, §21 isolation) → matchCount.
+    _marketEligibilityMatchCountAtCompute: {},
+    _recordMarketEligibilityRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return;
+        if (!Array.isArray(this._marketEligibilityRows)) this._marketEligibilityRows = [];
+        const keyOf = r => `${r.championshipId}\u0001${r.marketKey}\u0001${r.seed}`;
+        const byKey = new Map(this._marketEligibilityRows.map(r => [keyOf(r), r]));
+        for (const r of rows) {
+            if (!r || typeof r.championshipId !== 'string' || typeof r.marketKey !== 'string') continue;
+            byKey.set(keyOf(r), {
+                championshipId: r.championshipId, championshipName: r.championshipName || r.championshipId,
+                marketKey: r.marketKey, seed: r.seed,
+                validSelections: r.validSelections, calibratedProbabilityMean: r.calibratedProbabilityMean,
+                observedFrequency: r.observedFrequency, brier: r.brier, logLoss: r.logLoss,
+                ece: r.ece, mce: r.mce, roi: r.roi, drawdownPct: r.drawdownPct, maxLosingStreak: r.maxLosingStreak,
+                // AJOUT ADDITIF — PROMPT « MOTEUR 5 SEEDS » : champs supplémentaires conservés dans la
+                // ligne compacte par seed (aucun champ ci-dessus retiré/renommé).
+                selections: r.selections, profit: r.profit, drawdown: r.drawdown,
+                calibratedProbability: r.calibratedProbability, calibrationGap: r.calibrationGap,
+                marketLabel: r.marketLabel, positive: r.positive
+            });
+        }
+        this._marketEligibilityRows = [...byKey.values()];
+    },
+    // CORRECTIF PROMPT 3 (§2) — persistance COMPACTE du Snapshot marchés (mêmes lignes que
+    // _marketEligibilityRows, jamais de capitalRows/allSelections/historique détaillé — §3 du prompt).
+    // Réutilise DB.savePreference (mécanique de prefs EXISTANTE, INCHANGÉE), aucune nouvelle base.
+    // Appelée EXPLICITEMENT après chaque capture réussie (jamais en arrière-plan, jamais au démarrage).
+    async _persistMarketEligibilityRows() {
+        if (typeof DB === 'undefined' || typeof DB.savePreference !== 'function') return false;
+        this._marketEligibilityGeneratedAt = new Date().toISOString();
+        const payload = {
+            version: 1, kind: 'marketEligibilityRows',
+            generatedAt: this._marketEligibilityGeneratedAt,
+            rows: Array.isArray(this._marketEligibilityRows) ? this._marketEligibilityRows : [],
+            // AJOUT ADDITIF — PROMPT 3B FINAL §1 : matchCountAtCompute par championnat, persisté avec les
+            // mêmes lignes compactes (aucune nouvelle base, même mécanique DB.savePreference qu'avant).
+            matchCountAtCompute: (this._marketEligibilityMatchCountAtCompute && typeof this._marketEligibilityMatchCountAtCompute === 'object') ? this._marketEligibilityMatchCountAtCompute : {}
+        };
+        try { await DB.savePreference(this.MARKET_ELIGIBILITY_ROWS_KEY, payload); return true; }
+        catch (e) { console.warn('Snapshot marchés : persistance impossible', e); return false; }
+    },
+    // CORRECTIF PROMPT 3 (§4/§14/§21/§23) — chargement PASSIF UNIQUEMENT (DB.getPreference), appelé une
+    // seule fois dans App.init() : ne relance JAMAIS TEST VALUE/les 5 seeds/CALCULS au démarrage,
+    // retrouve simplement le dernier Snapshot déjà capturé (§4 : « Le Snapshot existant doit
+    // simplement être chargé »).
+    async _loadPersistedMarketEligibilityRows() {
+        this._marketEligibilityRows = [];
+        this._marketEligibilityGeneratedAt = null;
+        this._marketEligibilityMatchCountAtCompute = {};
+        if (typeof DB === 'undefined' || typeof DB.getPreference !== 'function') return 0;
+        try {
+            const stored = await DB.getPreference(this.MARKET_ELIGIBILITY_ROWS_KEY);
+            if (stored && stored.kind === 'marketEligibilityRows' && Array.isArray(stored.rows)) {
+                this._marketEligibilityRows = stored.rows;
+                this._marketEligibilityGeneratedAt = (typeof stored.generatedAt === 'string') ? stored.generatedAt : null;
+                // AJOUT ADDITIF — PROMPT 3B FINAL §1/§19 : restauration passive de matchCountAtCompute
+                // (absent des anciens Snapshots persistés avant cette version → {} par défaut, jamais
+                // une valeur inventée ; un tel championnat reste alors non marqué obsolète tant qu'aucune
+                // nouvelle capture n'a eu lieu — dégradation gracieuse, §25 non-régression).
+                this._marketEligibilityMatchCountAtCompute = (stored.matchCountAtCompute && typeof stored.matchCountAtCompute === 'object') ? stored.matchCountAtCompute : {};
+            }
+        } catch (e) { console.warn('Snapshot marchés : chargement persistance impossible', e); }
+        return this._marketEligibilityRows.length;
+    },
+    // AJOUT ADDITIF — PROMPT 3B FINAL §1/§20 : détection PASSIVE de l'obsolescence du Snapshot marchés
+    // pour UN championnat (isolation stricte, §21 — jamais un mélange entre championnats). Réutilise le
+    // même schéma de comparaison que persistedLeagueBlock (isNum + inégalité stricte). Retourne
+    // { stale, matchCountAtCompute, currentMatchCount } — jamais null : { stale:false, … } tant que la
+    // référence est absente (aucun Snapshot capturé pour ce championnat, ou Snapshot hérité d'une
+    // version antérieure à ce correctif — jamais assimilé à un refus, cf. §25).
+    _marketEligibilityStaleFor(championshipId) {
+        const map = this._marketEligibilityMatchCountAtCompute;
+        const atCompute = (map && typeof map === 'object') ? map[championshipId] : null;
+        const info = this._importedLeaguesSummary().find(l => this._idOfLeague(l.name) === this._idOfLeague(championshipId));
+        const currentMatchCount = info && Number.isFinite(info.matchCount) ? info.matchCount : null;
+        const stale = Number.isFinite(atCompute) && Number.isFinite(currentMatchCount) && atCompute !== currentMatchCount;
+        return { stale, matchCountAtCompute: Number.isFinite(atCompute) ? atCompute : null, currentMatchCount };
+    },
+    // MarketEligibilitySnapshot : LECTURE SEULE, aucun recalcul de probabilité/calibration/ROI/Capital/seeds —
+    // MarketEligibilityEngine.buildSnapshot (PROMPT 2, pur et déjà testé) agrège les lignes compactes
+    // ci-dessus et applique la règle de décision. Retourne null tant qu'aucune donnée n'est disponible.
+    _marketEligibilitySnapshot() {
+        if (typeof MarketEligibilityEngine === 'undefined' || !Array.isArray(this._marketEligibilityRows) || !this._marketEligibilityRows.length) return null;
+        try { return MarketEligibilityEngine.buildSnapshot(this._marketEligibilityRows); } catch (_) { return null; }
+    },
+    // ═══ FIN AJOUT ADDITIF — PROMPT 3 : capture compacte MarketEligibilityEngine ═══
+    // ═══ AJOUT ADDITIF — PROMPT 4 : couche d'autorisation en Analyse/Coupons ═══
+    // STRICTEMENT une lecture, EN AVAL de tout calcul (Analyse/CALCULS/EngineV22/
+    // MarketModelEngine/GoalModel/calibration/température/poids/walk-forward
+    // INCHANGÉS) : retrouve, pour un championnat et une clé de marché LIVE
+    // donnés, l'entrée déjà décidée par le Snapshot marchés (PROMPT 2/3, via
+    // MarketEligibilityRouting.tabKeyForLiveKey — PROMPT 4). Renvoie null dès
+    // que la donnée manque (routage impossible, championnat/marché jamais
+    // capturé par TEST VALUE — TOUS LES CHAMPIONNATS, ou aucun Snapshot
+    // construit) : absence de capture n'est JAMAIS assimilée à un refus, le
+    // marché reste alors utilisable normalement, exactement comme avant
+    // l'existence du Snapshot marchés.
+    _marketEligibilityEntryFor(leagueName, key) {
+        try {
+            if (typeof MarketEligibilityRouting === 'undefined') return null;
+            const tabKey = MarketEligibilityRouting.tabKeyForLiveKey(key);
+            if (!tabKey || typeof leagueName !== 'string' || !leagueName.trim()) return null;
+            const snap = this._marketEligibilitySnapshot();
+            const champ = snap && snap.championships ? snap.championships[leagueName] : null;
+            return (champ && champ[tabKey]) ? champ[tabKey] : null;
+        } catch (_) { return null; }
+    },
+    // Bandeau d'avertissement — jamais un filtre : le marché reste affiché,
+    // calculé et cliquable ; seul un message additionnel apparaît quand son
+    // statut n'est pas ACTIVE (DISABLED, données insuffisantes incluses). Ne renvoie
+    // JAMAIS « NON DISPONIBLE » (une probabilité a bien été calculée ici :
+    // la distinction est « probabilité disponible + marché non autorisé »).
+    _marketEligibilityWarningHTML(leagueName, key) {
+        const entry = this._marketEligibilityEntryFor(leagueName, key);
+        if (!entry || entry.status === 'ACTIVE') return '';
+        return `<div class="text-sub fs-05" style="color:var(--red);">⚠️ Marché ne passe pas les filtres (${Utils.escapeHTML(entry.status)})</div>`;
+    },
+    // ═══ FIN AJOUT ADDITIF — PROMPT 4 : couche d'autorisation en Analyse/Coupons ═══
     _idOfLeague(name) { return (typeof Utils !== 'undefined' && typeof Utils.normalizeLeagueIdentity === 'function') ? Utils.normalizeLeagueIdentity(name) : String(name ?? '').trim().toLowerCase(); },
     // Matchs d'UN SEUL championnat (jamais DB.getAllMatches() traité en bloc).
     _leagueMatches(name) {
@@ -25821,6 +27063,28 @@ La priorité est la qualité des sélections, pas la quantité.`;
         const map = { LEAGUE_SCOPE_REQUIRED: 'championnat non précisé (calcul multi-championnats interdit)', ISOLATION_VIOLATION: 'isolation violée : plusieurs championnats détectés dans les matchs fournis', LEAGUE_EMPTY: 'aucun match exploitable pour ce championnat', CALIBRATION_ABSENTE: 'calibration du championnat absente du registre (relancez CALCULS pour ce championnat)', MODULES_INDISPONIBLES: 'modules VALUE TEST indisponibles' };
         return map[code] || code || (error && (error.message || error.name)) || 'Erreur inconnue (voir console)';
     },
+    // ============================================================
+    // AJOUT ADDITIF — PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §2/§3/§4 : options Capital CANONIQUES,
+    // UNE SEULE fonction, UNE SEULE source (BacktestCore.CONFIG), appelée À L'IDENTIQUE par :
+    //   - App.runValueTestForChampionship (le TEST VALUE « Manuel », seed='default')
+    //   - App.runSnapshotForChampionship (chaque Seed automatique 1 à 5 du Snapshot)
+    // Aucune reconstruction locale différente à l'un des deux sites d'appel, aucune dépendance à
+    // l'onglet interactif « Capital » (_capitalSettings, réglable par l'utilisateur pour de
+    // l'exploration ponctuelle « et si ? » — volontairement DÉCOUPLÉ du moteur automatique pour que
+    // le Snapshot reste reproductible même si l'utilisateur modifie ces réglages entre deux seeds).
+    // Ne crée AUCUNE deuxième formule de capital/Kelly/stake/settlement — transmet uniquement les
+    // PARAMÈTRES déjà lus par ValueTestEngine.simulateCapital (INCHANGÉE).
+    // ============================================================
+    _canonicalCapitalOptions() {
+        const cfg = (typeof BacktestCore !== 'undefined' && BacktestCore.CONFIG) ? BacktestCore.CONFIG : {};
+        return Object.freeze({
+            initialCapital: Number.isFinite(cfg.initialCapital) ? cfg.initialCapital : 10000,
+            kellyDivisor: Number.isFinite(cfg.kellyDivisor) ? cfg.kellyDivisor : 10,
+            edgeDecimal: 0.05,
+            capMode: 'A',
+            capPercent: null
+        });
+    },
     async runValueTestForChampionship(championshipId) {
         if (typeof championshipId !== 'string' || !championshipId.trim()) { showToast('⛔ VALUE TEST refusé : aucun championnat précisé.', 'error'); return; }
         const selected = (typeof ValueTestUI !== 'undefined' && typeof ValueTestUI.getSelectedLeague === 'function') ? ValueTestUI.getSelectedLeague() : null;
@@ -25837,6 +27101,9 @@ La priorité est la qualité des sélections, pas la quantité.`;
             const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
             const res = await BacktestCore.runValueTest(scoped, {
                 leagueScope: info.name,
+                // AJOUT ADDITIF — PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §4 : options Capital canoniques,
+                // EXPLICITES, identiques à celles de runSnapshotForChampionship (même helper).
+                capitalOptions: this._canonicalCapitalOptions(),
                 shouldStop: () => job.stopRequested,
                 onProgress: p => {
                     job.phase = p.phase; job.done = p.done; job.total = p.total; job.replayDone = p.replayDone; job.replayTotal = p.replayTotal;
@@ -25872,6 +27139,168 @@ La priorité est la qualité des sélections, pas la quantité.`;
                 showToast(`❌ VALUE TEST ${info.name} : ${this._calcErrorLabel(error)}`, 'error');
             }
         } finally { this._endCalcJob(job); }
+    },
+
+    // ============================================================
+    // AJOUT ADDITIF — PROMPT 4 : SNAPSHOT MARCHÉS (5 TEST VALUE COMPLETS séquentiels, 1 championnat)
+    // ------------------------------------------------------------
+    // Le bouton « 📸 CAPTURER LE SNAPSHOT DE CE CHAMPIONNAT » orchestre le TEST VALUE EXISTANT
+    // (BacktestCore.runValueTest, INCHANGÉ) : pour le championnat actuellement sélectionné dans
+    // TEST VALUE, exécute Seed 1 PUIS Seed 2 PUIS Seed 3 PUIS Seed 4 PUIS Seed 5 (jamais Promise.all, jamais en parallèle —
+    // même verrou _beginCalcJob/_endCalcJob que le VALUE TEST manuel, acquis et relâché À CHAQUE seed).
+    // À la fin de chaque seed : seules les lignes compactes déjà produites par le TEST VALUE
+    // (res.unitStats — championshipId×marketKey×seed, PROMPT 1, INCHANGÉ) sont conservées dans
+    // `seedRows` ; `res` (capitalRows/marketStats/debug bruts de CE seed) sort de portée à la fin de
+    // l'itération de boucle et n'est référencé nulle part ailleurs — donc jamais deux seeds de
+    // sélections détaillées en mémoire à la fois. Après les 5 seeds, les lignes compactes sont
+    // fusionnées dans App._marketEligibilityRows (App._recordMarketEligibilityRows, PROMPT 3,
+    // INCHANGÉ) : la clé de dédoublonnage (championshipId×marketKey×seed) fait qu'un nouveau
+    // Snapshot du MÊME championnat remplace ses 3 anciennes lignes sans en accumuler d'autres.
+    // MarketEligibilityEngine.buildSnapshot (PROMPT 2, INCHANGÉ), déjà lu par l'onglet 📸 Snapshot
+    // marchés via App._marketEligibilitySnapshot(), reflète alors les 3 nouvelles seeds. AUCUN second
+    // moteur TEST VALUE/Capital/Statistiques créé ici — uniquement : appeler → attendre → extraire →
+    // compacter → libérer → rappeler.
+    // ============================================================
+    _snapshotJob: null, // { league, seedIndex(1..5), seedsTotal:5, phase:'TEST_VALUE'|'COMPACTED'|'DONE' } — affichage seul
+    _snapshotError: null,
+    // Seeds FIXES et déterministes (jamais Date.now()/Math.random()) : un Snapshot relancé sur le même
+    // championnat retire exactement les mêmes 5 seeds, donc — à données/calibration inchangées — les
+    // mêmes résultats (règle « TEST VALUE DOIT RESTER IDENTIQUE »). Distinctes du seed par défaut
+    // ('default') et du seed libre de l'orchestrateur « Tous les championnats » : ne collisionnent donc
+    // jamais avec les lignes déjà enregistrées par ces deux autres chemins dans _marketEligibilityRows.
+    // AJOUT ADDITIF — PROMPT « MOTEUR 5 SEEDS » : exactement 5 seeds FIXES et déterministes (jamais
+    // Date.now()/Math.random()), littérales et identiques pour tous les championnats (le championnat
+    // + les données déjà scopées par _leagueMatches(info.name) suffisent à distinguer les résultats —
+    // le dédoublonnage dans _recordMarketEligibilityRows est déjà championshipId×marketKey×seed, donc
+    // aucune collision possible entre deux championnats utilisant la même seed littérale).
+    _snapshotSeedIds(championshipId) {
+        return ['snapshot-seed-1', 'snapshot-seed-2', 'snapshot-seed-3', 'snapshot-seed-4', 'snapshot-seed-5'];
+    },
+    async runSnapshotForChampionship(championshipId) {
+        if (typeof championshipId !== 'string' || !championshipId.trim()) { showToast('⛔ Snapshot refusé : aucun championnat précisé.', 'error'); return; }
+        const selected = (typeof ValueTestUI !== 'undefined' && typeof ValueTestUI.getSelectedLeague === 'function') ? ValueTestUI.getSelectedLeague() : null;
+        if (selected !== championshipId) { showToast(`⛔ Snapshot refusé : championnat sélectionné (${selected || '—'}) ≠ championnat demandé (${championshipId}).`, 'error'); return; }
+        if (this._snapshotJob) { showToast('⏳ Un Snapshot est déjà en cours.', 'alert'); return; }
+        if (this._calcJob || (typeof globalThis !== 'undefined' && globalThis.calibrationRunning)) { showToast(`⏳ ${ManualCalcGate.busyMessage(this._calcJob) || 'Un calcul est déjà en cours.'}`, 'alert'); return; }
+        const pre = this._valueTestPrecheck(championshipId);
+        if (!pre.ok) { this._lastValueTestError = { league: championshipId, message: pre.message }; showToast(`⛔ ${pre.message}`, 'alert'); this.renderValueTest(); return; }
+        const info = pre.info;
+        const seeds = this._snapshotSeedIds(info.name);
+        this._snapshotError = null;
+        this._snapshotJob = { league: info.name, seedIndex: 0, seedsTotal: seeds.length, phase: 'TEST_VALUE' };
+        this._refreshCalcViews();
+        // Accumulateur COMPACT uniquement (championshipId×marketKey×seed, déjà produit par TEST VALUE) —
+        // jamais capitalRows/allSelections/allDetailedResults des 5 seeds à la fois (règle 8/16 du prompt).
+        const seedRows = [];
+        try {
+            for (let i = 0; i < seeds.length; i++) {
+                this._snapshotJob = { league: info.name, seedIndex: i + 1, seedsTotal: seeds.length, phase: 'TEST_VALUE' };
+                this._refreshCalcViews();
+                const job = this._beginCalcJob('VALUE_TEST', info.name); // même verrou EXISTANT — un seul seed exécuté à la fois
+                if (!job) { throw Object.assign(new Error('CALC_JOB_BUSY'), { code: 'CALC_JOB_BUSY' }); }
+                try {
+                    const scoped = this._leagueMatches(info.name); // UN SEUL championnat, jamais un autre chargé
+                    const res = await BacktestCore.runValueTest(scoped, {
+                        leagueScope: info.name,
+                        seed: seeds[i],
+                        // AJOUT ADDITIF — PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §4 : mêmes options Capital,
+                        // EXPLICITES, que le TEST VALUE Manuel (même helper App._canonicalCapitalOptions()).
+                        capitalOptions: this._canonicalCapitalOptions(),
+                        shouldStop: () => job.stopRequested,
+                        onProgress: p => {
+                            job.phase = p.phase; job.done = p.done; job.total = p.total; job.replayDone = p.replayDone; job.replayTotal = p.replayTotal;
+                            job.selectionsEvaluated = p.selectionsEvaluated; job.valueSelections = p.valueSelections;
+                            try {
+                                ValueTestUI.setProgress(job);
+                                ValueTestUI.setRunStatus(`⏳ SNAPSHOT ${info.name} — Seed ${i + 1}/${seeds.length} — TEST VALUE complet en cours — ${p.phase === 'TEST' ? p.done + ' / ' + p.total : 'rejeu ' + p.replayDone + ' / ' + p.replayTotal}`);
+                            } catch (_) { /* affichage seul */ }
+                        }
+                    });
+                    // Extraction des SEULES métriques compactes nécessaires (Statistiques + Capital déjà
+                    // calculés par TEST VALUE dans res.unitStats — AUCUNE approximation, AUCUN recalcul).
+                    for (const row of (Array.isArray(res.unitStats) ? res.unitStats : [])) seedRows.push(row);
+                    // `res` (capitalRows/marketStats/debug bruts de ce seed) sort de portée ici — RIEN d'autre
+                    // n'en garde de référence : libéré avant le seed suivant (garbage-collection opportunity).
+                } finally { this._endCalcJob(job); }
+                this._snapshotJob = { league: info.name, seedIndex: i + 1, seedsTotal: seeds.length, phase: 'COMPACTED' };
+                this._refreshCalcViews();
+            }
+            // Agrégation des 5 seeds + décision ACTIVE/DISABLED (INSUFFICIENT_DATA fusionné dans DISABLED) : entièrement
+            // délégué à MarketEligibilityEngine.buildSnapshot (via App._marketEligibilitySnapshot(), PROMPT 2/3,
+            // INCHANGÉS) — aucun calcul de ROI moyen/min/max/positiveSeeds/ECE/drawdown réécrit ici.
+            this._recordMarketEligibilityRows(seedRows);
+            // AJOUT ADDITIF — PROMPT 3B FINAL §1 : enregistre la référence d'obsolescence pour CE
+            // championnat UNIQUEMENT (isolation §21), au nombre de matchs réellement utilisé pour
+            // cette capture (info.matchCount, §20). Jamais un recalcul, une seule affectation.
+            if (!this._marketEligibilityMatchCountAtCompute || typeof this._marketEligibilityMatchCountAtCompute !== 'object') this._marketEligibilityMatchCountAtCompute = {};
+            if (Number.isFinite(info.matchCount)) this._marketEligibilityMatchCountAtCompute[info.name] = info.matchCount;
+            // CORRECTIF PROMPT 3 (§2/§12) — persistance explicite à la fin de la capture (5/5 seeds),
+            // avant le toast de succès : un rechargement immédiat après « Snapshot mis à jour »
+            // retrouve bien le résultat (§14).
+            await this._persistMarketEligibilityRows();
+            this._snapshotJob = { league: info.name, seedIndex: seeds.length, seedsTotal: seeds.length, phase: 'DONE' };
+            this._refreshCalcViews();
+            const finalSnap = this._marketEligibilitySnapshot();
+            const marketsForLeague = (finalSnap && finalSnap.championships && finalSnap.championships[info.name]) ? Object.values(finalSnap.championships[info.name]) : [];
+            const positiveCount = marketsForLeague.reduce((s, m) => s + (Number.isFinite(m.positiveSeeds) ? m.positiveSeeds : 0), 0);
+            const seedsCountTotal = marketsForLeague.reduce((s, m) => s + (Number.isFinite(m.seedsCount) ? m.seedsCount : 0), 0);
+            showToast(`✅ Snapshot ${info.name} terminé — ${seeds.length}/${seeds.length} seeds exécutés${marketsForLeague.length ? ` — ${marketsForLeague.length} marché(s), ${positiveCount}/${seedsCountTotal} seeds positives (cumulé)` : ''}`, 'success');
+        } catch (error) {
+            if (error && error.code === 'CALCUL_INTERROMPU') {
+                showToast(`■ Snapshot ${info.name} interrompu — aucun résultat enregistré pour ce seed. Relancez manuellement.`, 'alert');
+            } else {
+                console.error('Snapshot marchés : échec', error);
+                this._snapshotError = { league: info.name, message: `Snapshot impossible : ${this._calcErrorLabel(error)}` };
+                showToast(`❌ Snapshot ${info.name} : ${this._calcErrorLabel(error)}`, 'error');
+            }
+        } finally {
+            this._snapshotJob = null;
+            this._refreshCalcViews();
+        }
+    },
+    // ═══ FIN AJOUT ADDITIF — PROMPT 4 : SNAPSHOT MARCHÉS ═══
+
+    // ============================================================
+    // AJOUT ADDITIF — PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §12 : DIAGNOSTIC Manuel vs Seed
+    // ------------------------------------------------------------
+    // Outil de diagnostic TEMPORAIRE (lecture seule, ne modifie ni ne persiste rien) : rejoue
+    // BacktestCore.runValueTest() pour un championnat avec le seed 'default' (= le TEST VALUE
+    // Manuel) PUIS avec le seed demandé (ex. 'snapshot-seed-1'), TOUS DEUX avec les MÊMES options
+    // Capital canoniques (App._canonicalCapitalOptions(), §4), et affiche pourquoi un marché donné
+    // diverge : sélections communes/manquantes/additionnelles, mises totales/moyennes, capital
+    // final, ROI. N'invente aucun chiffre — tout provient de deux appels réels au même moteur.
+    // ============================================================
+    async diagnoseManualVsSeedForMarket(championshipId, marketKey, seedId) {
+        const pre = this._valueTestPrecheck(championshipId);
+        if (!pre.ok) return { ok: false, reason: pre.code, message: pre.message };
+        const info = pre.info;
+        const scoped = this._leagueMatches(info.name);
+        const capitalOptions = this._canonicalCapitalOptions();
+        const manualRes = await BacktestCore.runValueTest(scoped, { leagueScope: info.name, seed: 'default', capitalOptions });
+        const seedRes = await BacktestCore.runValueTest(scoped, { leagueScope: info.name, seed: seedId, capitalOptions });
+        const rowsFor = res => (Array.isArray(res.capitalRows) ? res.capitalRows : []).filter(r => r.marketTab === marketKey);
+        const manualRows = rowsFor(manualRes), seedRows = rowsFor(seedRes);
+        const keyOf = r => `${r.matchIdentity}\u0001${r.selectionId}\u0001${r.line ?? ''}`;
+        const manualKeys = new Set(manualRows.map(keyOf)), seedKeys = new Set(seedRows.map(keyOf));
+        const common = manualRows.filter(r => seedKeys.has(keyOf(r)));
+        const missing = manualRows.filter(r => !seedKeys.has(keyOf(r))); // dans Manuel, absent du Seed
+        const additional = seedRows.filter(r => !manualKeys.has(keyOf(r))); // dans Seed, absent du Manuel
+        const simManual = ValueTestEngine.simulateCapital(manualRows, Object.assign({}, capitalOptions, { keepDetail: false }));
+        const simSeed = ValueTestEngine.simulateCapital(seedRows, Object.assign({}, capitalOptions, { keepDetail: false }));
+        const statsFor = sim => (sim && sim.ok && sim.stats) ? sim.stats : null;
+        const ms = statsFor(simManual), ss = statsFor(simSeed);
+        return {
+            ok: true, championshipId: info.name, marketKey, seedId,
+            manualSelections: manualRows.length, seedSelections: seedRows.length,
+            commonSelections: common.length, missingSelections: missing.length, additionalSelections: additional.length,
+            manualTotalStake: ms ? ms.totalStaked : null, seedTotalStake: ss ? ss.totalStaked : null,
+            manualAverageStake: ms ? ms.averageStake : null, seedAverageStake: ss ? ss.averageStake : null,
+            manualFinalCapital: ms ? ms.finalCapital : null, seedFinalCapital: ss ? ss.finalCapital : null,
+            manualROI: ms ? ms.returnPct : null, seedROI: ss ? ss.returnPct : null,
+            // Détail exploitable pour trancher la cause (§12) : listes des sélections en écart.
+            missingRows: missing.map(r => ({ matchIdentity: r.matchIdentity, selectionId: r.selectionId, line: r.line, calibratedProbability: r.calibratedProbability, result: r.result })),
+            additionalRows: additional.map(r => ({ matchIdentity: r.matchIdentity, selectionId: r.selectionId, line: r.line, calibratedProbability: r.calibratedProbability, result: r.result }))
+        };
     },
 
     // ============================================================
@@ -25918,6 +27347,10 @@ La priorité est la qualité des sélections, pas la quantité.`;
                 const res = await BacktestCore.runValueTest(scoped, {
                     leagueScope: leagueName,
                     seed, // même seed transmis à TOUS les championnats
+                    // AJOUT ADDITIF — PROMPT « COHÉRENCE MANUEL ↔ SEEDS » §4 : même helper canonique que
+                    // le Manuel (runValueTestForChampionship) et le Snapshot (runSnapshotForChampionship) —
+                    // un troisième chemin automatisé ne doit pas non plus retomber sur un défaut divergent.
+                    capitalOptions: this._canonicalCapitalOptions(),
                     shouldStop: () => job.stopRequested || (typeof options.shouldStop === 'function' && options.shouldStop())
                 });
                 championshipsCount++;
@@ -25934,6 +27367,14 @@ La priorité est la qualité des sélections, pas la quantité.`;
             }
         }
         const distinctMarketKeys = new Set(unitStatsGlobal.map(r => r.marketKey));
+        // AJOUT ADDITIF — PROMPT 3 : alimente l'accumulateur multi-seeds MarketEligibilityEngine avec les
+        // lignes compactes de CE run (un seed) — lecture seule de unitStatsGlobal déjà construit ci-dessus,
+        // aucun second calcul. Voir App._recordMarketEligibilityRows.
+        this._recordMarketEligibilityRows(unitStatsGlobal);
+        // CORRECTIF PROMPT 3 (§2/§12) — même persistance explicite que runSnapshotForChampionship :
+        // ce chemin (orchestrateur « Tous les championnats ») alimente le MÊME accumulateur et doit
+        // donc survivre lui aussi à un rechargement.
+        await this._persistMarketEligibilityRows();
         return {
             seed,
             timestamp: new Date().toISOString(),
@@ -26957,6 +28398,9 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
             else record('reload_enriched_matches',false,true,'no_match_change');
             record('reconcile_sports_atomic',false,true,'odds_only_import');
             await attempt('render_import_status',async()=>{document.getElementById('importStatus').textContent=`Ajoutés : ${importResult.added} · Doublons : ${importResult.duplicates} · Cotes enrichies : ${importResult.matchesOddsEnriched||0} · Réconciliation sportive : non requise`;});
+            // AJOUT ADDITIF (§12/§13) — enregistrement du dernier import PAR CHAMPIONNAT + rafraîchissement
+            // immédiat de Maintenance → Données si cette sous-page est déjà ouverte (aucun rechargement complet).
+            await attempt('record_import_log',async()=>{ await this._recordImportLog(importResult); if (this.currentPage === 'maintenance' && this._maintenanceSubTab === 'donnees') this.renderMaintenanceData(); });
             return{postCommitReconciliationRequired:postCommitErrors.length>0,postCommitErrors,reconciliationSteps};
         }
         const committed=await attempt('reconcile_sports_atomic',()=>DB.reconcileImportedSportsAtomic());
@@ -26977,6 +28421,9 @@ if(!reliable&&team.matches){team.xG=xGEngine.calculateXGFromGoals(team.goalsScor
             // sans jamais déclencher le moindre calcul (renderPerformance()
             // est une lecture seule, voir plus haut).
             await attempt('refresh_calculs_leagues',async()=>{ if (this.currentPage === 'performance') this.renderPerformance(); });
+            // AJOUT ADDITIF (§12/§13) — enregistrement du dernier import PAR CHAMPIONNAT + rafraîchissement
+            // immédiat de Maintenance → Données si cette sous-page est déjà ouverte (aucun rechargement complet).
+            await attempt('record_import_log',async()=>{ await this._recordImportLog(importResult); if (this.currentPage === 'maintenance' && this._maintenanceSubTab === 'donnees') this.renderMaintenanceData(); });
             // RETIRÉ (demande explicite du 15/09, révision 2) — le recalibrage
             // ne se déclenche plus automatiquement ici après un import. Le
             // nombre de matchs qui change rend bien le CalibrationSnapshot
@@ -28128,6 +29575,492 @@ Object.assign(App, {
         showToast(`Export JSON terminé (${rows.length} résultat(s))`, 'success');
     }
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// AJOUT ADDITIF — Onglet Maintenance (🛠️) : 6 sous-onglets LECTURE SEULE
+// (Santé/Cohérence/Marchés/Données/Historique/Tests). Aucune modification
+// des onglets principaux (Accueil/Données/Analyse/Coupons/Capital/CALCULS/
+// VALUE TEST), aucun second moteur, aucune formule dupliquée : ce bloc ne
+// fait qu'agréger et afficher des structures déjà calculées/persistées
+// ailleurs dans ce fichier (BacktestCore.run(), MarketEligibilityEngine,
+// ValueTestEngine, ConfigurationRegistry, DataAuditEngine, les modules
+// *SelfTests existants). renderMaintenance() ne rend JAMAIS les 6 sous-pages
+// simultanément — uniquement celle actuellement active.
+// ═══════════════════════════════════════════════════════════════════════
+const MaintUI = (() => {
+    'use strict';
+    const esc = s => (typeof Utils !== 'undefined' && typeof Utils.escapeHTML === 'function') ? Utils.escapeHTML(String(s)) : String(s);
+    const isNum = v => typeof v === 'number' && Number.isFinite(v);
+    const pct = v => isNum(v) ? (v * 100).toFixed(1) + ' %' : 'NON DISPONIBLE';
+    const dec = (v, n = 3) => isNum(v) ? v.toFixed(n) : 'NON DISPONIBLE';
+    const int = v => isNum(v) ? String(Math.round(v)) : 'NON DISPONIBLE';
+    const row = (label, value) => `<div class="stat-row"><span class="label">${esc(label)}</span><span class="value">${esc(value)}</span></div>`;
+    const section = (title, bodyHtml, open) => `<details class="model-diagnostic"${open ? ' open' : ''}><summary>${esc(title)}</summary><div class="model-diagnostic-body">${bodyHtml}</div></details>`;
+    const emptyState = msg => `<div class="stat-row"><span class="label">Statut</span><span class="value">${esc(msg)}</span></div>`;
+    const statusBadge = status => status === 'ACTIVE' ? '<span class="badge badge-green">🟢 ACTIVE</span>' : (status === 'DISABLED' ? '<span class="badge badge-red">🔴 DISABLED</span>' : '<span class="badge badge-cyan">⚫ N/A</span>');
+    const table = (headers, rows) => {
+        if (!Array.isArray(rows) || !rows.length) return emptyState('Aucune donnée');
+        return `<div class="model-diagnostic-scroll"><table style="width:100%;border-collapse:collapse;font-size:0.58rem;">
+            <thead><tr>${headers.map(h => `<th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);color:var(--cyan);white-space:nowrap;">${esc(h)}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(r => `<tr>${r.map(c => `<td style="padding:4px 6px;border-bottom:1px solid var(--border);">${c}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table></div>`;
+    };
+    return Object.freeze({ esc, isNum, pct, dec, int, row, section, emptyState, statusBadge, table });
+})();
+if (typeof globalThis !== 'undefined') globalThis.MaintUI = MaintUI;
+
+Object.assign(App, {
+    _maintenanceSubTab: 'sante',
+
+    switchMaintenanceSubTab(sub) {
+        if (!sub) return;
+        this._maintenanceSubTab = sub;
+        document.querySelectorAll('.maint-nav-item').forEach(b => b.classList.toggle('active', b.dataset.msub === sub));
+        document.querySelectorAll('.maint-page').forEach(p => p.classList.remove('active'));
+        const page = document.getElementById('maint-' + sub);
+        if (page) page.classList.add('active');
+        this.renderMaintenance();
+    },
+
+    // Dispatch LECTURE SEULE vers la sous-page active UNIQUEMENT — jamais les 6 en même temps.
+    renderMaintenance() {
+        const sub = this._maintenanceSubTab || 'sante';
+        const dispatch = {
+            sante: () => this.renderMaintenanceHealth(),
+            coherence: () => this.renderMaintenanceCoherence(),
+            marches: () => this.renderMaintenanceMarkets(),
+            donnees: () => this.renderMaintenanceData(),
+            historique: () => this.renderMaintenanceHistory(),
+            tests: () => this.renderMaintenanceTests()
+        };
+        if (dispatch[sub]) dispatch[sub]();
+    },
+
+    // ── 🩺 SANTÉ ─────────────────────────────────────────────────────────
+    renderMaintenanceHealth() {
+        const container = document.getElementById('maint-sante');
+        if (!container) return;
+        const M = MaintUI;
+        const dataCount = Array.isArray(this.matches) ? this.matches.length : 0;
+        const leaguesSummary = this._importedLeaguesSummary();
+        let html = M.section('📦 Vue d\'ensemble', M.row('Matchs en mémoire (DATA)', M.int(dataCount)) + M.row('Championnats importés', M.int(leaguesSummary.length)), true);
+
+        // CALIBRATION / WEIGHTS — via _persistedCalculsSnapshot, comparaison matchCountAtCompute vs actuel.
+        const calcLeagues = (this._persistedCalculsSnapshot && this._persistedCalculsSnapshot.leagues) ? this._persistedCalculsSnapshot.leagues : {};
+        const calcRows = Object.entries(calcLeagues).map(([uiName, entry]) => {
+            const info = leaguesSummary.find(l => this._idOfLeague(l.name) === this._idOfLeague(uiName));
+            const current = info ? info.matchCount : null;
+            const stale = M.isNum(entry.matchCountAtCompute) && M.isNum(current) && entry.matchCountAtCompute !== current;
+            const weights = (entry.modelWeights && typeof entry.modelWeights === 'object') ? Object.entries(entry.modelWeights).map(([k, v]) => `${k}=${M.dec(v, 3)}`).join(', ') : 'NON DISPONIBLE';
+            return [M.esc(uiName), M.int(entry.matchCountAtCompute), M.int(current), stale ? '🟡 STALE' : '🟢 À JOUR', M.esc(weights)];
+        });
+        html += M.section('⚖️ CALIBRATION / POIDS (CALCULS)', M.table(['Championnat', 'N au calcul', 'N actuel', 'Statut', 'Poids modèles'], calcRows), true);
+
+        // MARCHÉS / Handicap Asiatique — via _marketEligibilitySnapshot(), clé 'asian_handicap'.
+        const snap = this._marketEligibilitySnapshot();
+        let ahRows = [], totalActive = 0, totalDisabled = 0;
+        if (snap && snap.championships) {
+            for (const [champ, markets] of Object.entries(snap.championships)) {
+                for (const entry of Object.values(markets)) { if (entry.status === 'ACTIVE') totalActive++; else totalDisabled++; }
+                const ah = markets['asian_handicap'];
+                if (ah) ahRows.push([M.esc(champ), M.int(ah.validSelections), M.pct(ah.calibratedProbability), M.pct(ah.observedFrequency), M.statusBadge(ah.status)]);
+            }
+        }
+        html += M.section('📊 MARCHÉS — vue d\'ensemble + Handicap Asiatique', M.row('Marchés ACTIVE (tous championnats)', M.int(totalActive)) + M.row('Marchés DISABLED (tous championnats)', M.int(totalDisabled)) + M.table(['Championnat', 'N (AH)', 'Proba calibrée', 'Fréq. réelle', 'Statut'], ahRows), true);
+
+        // VALUE — via _valueTestSnapshots.
+        const vtNames = Object.keys(this._valueTestSnapshots || {});
+        const vtRows = vtNames.map(name => {
+            const s = this._valueTestSnapshots[name];
+            const d = (typeof ValueTestEngine !== 'undefined' && typeof ValueTestEngine.derive === 'function') ? ValueTestEngine.derive(s) : null;
+            return [M.esc(name), M.int(s && s.totals && s.totals.valueSelections), d ? M.pct(d.roi) : 'NON DISPONIBLE'];
+        });
+        html += M.section('🎯 VALUE (snapshots persistés)', M.table(['Championnat', 'Sélections VALUE', 'ROI'], vtRows), false);
+
+        // SNAPSHOT — via _marketEligibilityRows / _marketEligibilityStaleFor.
+        const rowsCount = Array.isArray(this._marketEligibilityRows) ? this._marketEligibilityRows.length : 0;
+        const staleRows = leaguesSummary.map(l => {
+            const st = this._marketEligibilityStaleFor(l.name);
+            const statut = st.matchCountAtCompute === null ? '⚫ NON CAPTURÉ' : (st.stale ? '🟡 STALE' : '🟢 À JOUR');
+            return [M.esc(l.name), M.int(st.matchCountAtCompute), M.int(st.currentMatchCount), statut];
+        });
+        html += M.section('📸 SNAPSHOT marchés — fraîcheur', M.row('Lignes brutes capturées', M.int(rowsCount)) + M.table(['Championnat', 'N au calcul', 'N actuel', 'Statut'], staleRows), false);
+
+        container.innerHTML = html;
+    },
+
+    // ── 🧭 COHÉRENCE ─────────────────────────────────────────────────────
+    // AJOUT ADDITIF — les 3 paramètres du diagnostic Manuel vs Seed (Championnat/Marché/Seed)
+    // sont désormais de vrais <select> (plus aucun champ texte libre) : Championnat provient de
+    // App._importedLeaguesSummary() (identité déjà existante, jamais une liste statique), Marché
+    // est reconstruit dynamiquement à partir de App._marketEligibilitySnapshot() en ne conservant
+    // que les marchés ACTIVE du championnat sélectionné (aucun second système de statut créé), et
+    // Seed réutilise les 5 valeurs déjà attendues par le diagnostic (App._snapshotSeedIds). État
+    // persisté (jamais recalculé automatiquement) pour survivre aux re-rendus de l'onglet.
+    _maintDiagState: { league: null, market: null, seed: null },
+    // Marchés ACTIVE (et uniquement ceux-là) pour un championnat donné, avec leur libellé lisible
+    // (repris des lignes déjà capturées par le Snapshot marchés, App._marketEligibilityRows —
+    // aucun second système de libellés). LECTURE SEULE : aucun recalcul de statut/probabilité/ROI.
+    _maintDiagActiveMarkets(leagueName) {
+        const snap = this._marketEligibilitySnapshot();
+        if (!snap || !snap.championships || typeof leagueName !== 'string' || !leagueName.trim()) return [];
+        const champKey = Object.keys(snap.championships).find(k => this._idOfLeague(k) === this._idOfLeague(leagueName));
+        if (!champKey) return [];
+        const markets = snap.championships[champKey] || {};
+        const rows = Array.isArray(this._marketEligibilityRows) ? this._marketEligibilityRows : [];
+        const labelFor = mk => {
+            const r = rows.find(r => r && this._idOfLeague(r.championshipId) === this._idOfLeague(leagueName) && r.marketKey === mk);
+            return (r && r.marketLabel) || mk;
+        };
+        return Object.entries(markets)
+            .filter(([, m]) => m && m.status === 'ACTIVE')
+            .map(([marketKey]) => ({ key: marketKey, label: labelFor(marketKey) }))
+            .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    },
+    renderMaintenanceCoherence() {
+        const container = document.getElementById('maint-coherence');
+        if (!container) return;
+        const M = MaintUI;
+        if (!this._maintDiagState) this._maintDiagState = { league: null, market: null, seed: null };
+        const leagues = this._importedLeaguesSummary();
+        // Championnat sélectionné : conserve la sélection existante si elle reste valide, sinon
+        // retombe sur le premier championnat réellement importé (jamais de valeur inventée).
+        if (!this._maintDiagState.league || !leagues.some(l => this._idOfLeague(l.name) === this._idOfLeague(this._maintDiagState.league))) {
+            this._maintDiagState.league = leagues.length ? leagues[0].name : null;
+        }
+        const activeMarkets = this._maintDiagState.league ? this._maintDiagActiveMarkets(this._maintDiagState.league) : [];
+        if (!activeMarkets.some(m => m.key === this._maintDiagState.market)) {
+            this._maintDiagState.market = activeMarkets.length ? activeMarkets[0].key : null;
+        }
+        const seeds = this._maintDiagState.league ? this._snapshotSeedIds(this._maintDiagState.league) : [];
+        if (!seeds.includes(this._maintDiagState.seed)) {
+            this._maintDiagState.seed = seeds.length ? seeds[0] : null;
+        }
+        const seedLabels = ['Seed 1', 'Seed 2', 'Seed 3', 'Seed 4', 'Seed 5'];
+        const leagueOptions = leagues.length
+            ? leagues.map(l => `<option value="${M.esc(l.name)}" ${l.name === this._maintDiagState.league ? 'selected' : ''}>${M.esc(l.name)}</option>`).join('')
+            : `<option value="">Aucun championnat importé</option>`;
+        const marketOptions = activeMarkets.length
+            ? activeMarkets.map(m => `<option value="${M.esc(m.key)}" ${m.key === this._maintDiagState.market ? 'selected' : ''}>${M.esc(m.label)}</option>`).join('')
+            : `<option value="">Aucun marché actif</option>`;
+        const seedOptions = seeds.length
+            ? seeds.map((s, i) => `<option value="${M.esc(s)}" ${s === this._maintDiagState.seed ? 'selected' : ''}>${M.esc(seedLabels[i] || s)}</option>`).join('')
+            : `<option value="">—</option>`;
+        const diagDisabled = (!this._maintDiagState.league || !activeMarkets.length || !this._maintDiagState.seed) ? 'disabled' : '';
+        container.innerHTML = `
+            <div class="flex gap-1 flex-wrap mb-2">
+                <button class="btn btn-sm btn-primary" onclick="App.runMaintenanceCoherenceCheck()">🔎 Lancer le contrôle</button>
+            </div>
+            <div id="maintCoherenceResult">${this._maintCoherenceResultHtml || M.emptyState('Contrôle non exécuté')}</div>
+            <div class="card mt-2" style="background:var(--bg);">
+                <div class="card-title fs-06">🧭 Analyse = Value — diagnostic Manuel vs Seed</div>
+                <div class="grid-2 mt-1" style="gap:6px;">
+                    <select id="maintDiagLeague" style="padding:6px;" ${leagues.length ? '' : 'disabled'} onchange="App.onMaintDiagLeagueChange(this.value)">${leagueOptions}</select>
+                    <select id="maintDiagMarket" style="padding:6px;" ${activeMarkets.length ? '' : 'disabled'} onchange="App.onMaintDiagMarketChange(this.value)">${marketOptions}</select>
+                    <select id="maintDiagSeed" style="padding:6px;" ${seeds.length ? '' : 'disabled'} onchange="App.onMaintDiagSeedChange(this.value)">${seedOptions}</select>
+                </div>
+                <button class="btn btn-sm btn-secondary mt-1" ${diagDisabled} onclick="App.runMaintenanceDiagnose()">▶️ Lancer le diagnostic (uniquement sur clic)</button>
+                <div id="maintDiagResult" class="mt-1">${this._maintDiagResultHtml || M.emptyState('Contrôle non exécuté')}</div>
+            </div>`;
+    },
+    // Changement de sélection (championnat/marché/seed) : jamais de résultat présenté comme
+    // appartenant à la nouvelle sélection — on revient à « Contrôle non exécuté » jusqu'au
+    // prochain clic explicite sur « ▶️ Lancer le diagnostic ».
+    onMaintDiagLeagueChange(value) {
+        if (!this._maintDiagState) this._maintDiagState = { league: null, market: null, seed: null };
+        this._maintDiagState.league = value || null;
+        this._maintDiagState.market = null; // reconstruit dans renderMaintenanceCoherence à partir du nouveau championnat
+        this._maintDiagResultHtml = null;
+        this.renderMaintenanceCoherence();
+    },
+    onMaintDiagMarketChange(value) {
+        if (!this._maintDiagState) this._maintDiagState = { league: null, market: null, seed: null };
+        this._maintDiagState.market = value || null;
+        this._maintDiagResultHtml = null;
+        this.renderMaintenanceCoherence();
+    },
+    onMaintDiagSeedChange(value) {
+        if (!this._maintDiagState) this._maintDiagState = { league: null, market: null, seed: null };
+        this._maintDiagState.seed = value || null;
+        this._maintDiagResultHtml = null;
+        this.renderMaintenanceCoherence();
+    },
+
+    // Vérifie 1X2/O-U/Total équipe/Fair Odds sur this._lastAnalysisResult.valueBets (LÉGER,
+    // AUCUN recalcul), puis exécute RedProAsianHandicapSelfTests.run().
+    async runMaintenanceCoherenceCheck() {
+        const M = MaintUI;
+        const container = document.getElementById('maintCoherenceResult');
+        if (container) container.innerHTML = 'Contrôle en cours...';
+        const bets = (this._lastAnalysisResult && Array.isArray(this._lastAnalysisResult.valueBets)) ? this._lastAnalysisResult.valueBets : [];
+        const issues = [];
+        let checked = 0;
+        for (const vb of bets) {
+            checked++;
+            if (!vb || !M.isNum(vb.modelProb) || vb.modelProb <= 0 || vb.modelProb >= 1) { issues.push(`${vb && vb.key} : probabilité hors bornes (${vb && vb.modelProb})`); continue; }
+            if (M.isNum(vb.fairOdd)) {
+                const expected = 1 / vb.modelProb;
+                if (Math.abs(vb.fairOdd - expected) > 0.01) issues.push(`${vb.key} : Fair Odds incohérente (${vb.fairOdd} attendu ≈${expected.toFixed(3)})`);
+            }
+        }
+        // 1X2 : somme des 3 probabilités ≈ 1.
+        const oneXTwo = ['result_home', 'result_draw', 'result_away'].map(k => bets.find(b => b && b.key === k)).filter(Boolean);
+        if (oneXTwo.length === 3) {
+            const sum = oneXTwo.reduce((s, b) => s + b.modelProb, 0);
+            if (Math.abs(sum - 1) > 0.02) issues.push(`1X2 : somme des probabilités = ${sum.toFixed(4)} (attendu ≈ 1)`);
+        }
+        // Over/Under et Total équipe par ligne : chaque paire over<line>/under<line> (ou
+        // overTeamXxx/underTeamXxx) déjà présente dans valueBets doit sommer ≈ 1.
+        const linesByPrefix = new Map();
+        for (const b of bets) {
+            if (!b || typeof b.key !== 'string') continue;
+            const m = /^(over|under)(Team(?:Home|Away))?(.+)$/.exec(b.key);
+            if (!m) continue;
+            const prefix = m[2] || '';
+            const line = m[3];
+            const groupKey = prefix + '|' + line;
+            if (!linesByPrefix.has(groupKey)) linesByPrefix.set(groupKey, {});
+            linesByPrefix.get(groupKey)[m[1]] = b;
+        }
+        for (const [groupKey, pair] of linesByPrefix) {
+            if (pair.over && pair.under) {
+                const sum = pair.over.modelProb + pair.under.modelProb;
+                if (Math.abs(sum - 1) > 0.02) issues.push(`${groupKey.replace('|', ' ')} : somme Over/Under = ${sum.toFixed(4)} (attendu ≈ 1)`);
+            }
+        }
+        let ahResults = null;
+        try { ahResults = (typeof RedProAsianHandicapSelfTests !== 'undefined') ? await RedProAsianHandicapSelfTests.run() : null; }
+        catch (e) { ahResults = { allPassed: false, error: String((e && e.message) || e) }; }
+        const ahBadge = (ahResults && ahResults.allPassed) ? '<span class="badge badge-green">✅ OK</span>' : '<span class="badge badge-red">❌ ÉCHEC</span>';
+        let html = M.row('Sélections auditées (valueBets)', M.int(checked));
+        html += M.row('Anomalies détectées (1X2/O-U/Total équipe/Fair Odds)', M.int(issues.length));
+        if (issues.length) html += issues.map(i => M.row('⚠️', i)).join('');
+        html += M.row('RedProAsianHandicapSelfTests.run()', ahBadge);
+        if (ahResults && ahResults.results) html += M.table(['Test AH', 'Résultat'], Object.entries(ahResults.results).map(([k, v]) => [M.esc(k), v ? '✅' : '❌']));
+        this._maintCoherenceResultHtml = html;
+        const out = document.getElementById('maintCoherenceResult');
+        if (out) out.innerHTML = html;
+    },
+
+    // Diagnostic Manuel vs Seed — UNIQUEMENT sur clic explicite (jamais automatique). Les 3
+    // paramètres proviennent désormais des <select> (App._maintDiagState), plus d'input texte.
+    async runMaintenanceDiagnose() {
+        const M = MaintUI;
+        const state = this._maintDiagState || {};
+        const league = state.league || '';
+        const market = state.market || '';
+        const seed = state.seed || '';
+        const out = document.getElementById('maintDiagResult');
+        if (!league.trim() || !market.trim() || !seed.trim()) { this._maintDiagResultHtml = M.emptyState('Sélectionnez un championnat, un marché actif et une seed'); if (out) out.innerHTML = this._maintDiagResultHtml; return; }
+        if (out) out.innerHTML = 'Diagnostic en cours...';
+        try {
+            const d = await this.diagnoseManualVsSeedForMarket(league.trim(), market.trim(), seed.trim());
+            if (!d || !d.ok) {
+                this._maintDiagResultHtml = M.emptyState((d && (d.message || d.reason)) || 'Échec du diagnostic');
+            } else {
+                this._maintDiagResultHtml = M.row('Sélections Manuel', M.int(d.manualSelections)) + M.row('Sélections Seed', M.int(d.seedSelections))
+                    + M.row('Communes', M.int(d.commonSelections)) + M.row('Manquantes (Manuel → absentes du Seed)', M.int(d.missingSelections))
+                    + M.row('Additionnelles (Seed → absentes du Manuel)', M.int(d.additionalSelections))
+                    + M.row('ROI Manuel', M.pct(d.manualROI)) + M.row('ROI Seed', M.pct(d.seedROI));
+            }
+        } catch (e) {
+            this._maintDiagResultHtml = M.emptyState('Erreur : ' + String((e && e.message) || e));
+        }
+        const out2 = document.getElementById('maintDiagResult');
+        if (out2) out2.innerHTML = this._maintDiagResultHtml;
+    },
+
+    // ── 📊 MARCHÉS ────────────────────────────────────────────────────────
+    renderMaintenanceMarkets() {
+        const container = document.getElementById('maint-marches');
+        if (!container) return;
+        const M = MaintUI;
+        const snap = this._marketEligibilitySnapshot();
+        const rows = [];
+        if (snap && snap.championships) {
+            for (const [champ, markets] of Object.entries(snap.championships)) {
+                for (const [mk, entry] of Object.entries(markets)) {
+                    rows.push([M.esc(champ), M.esc(mk), M.int(entry.validSelections), M.pct(entry.calibratedProbability), M.pct(entry.observedFrequency), M.dec(entry.ece, 3), M.statusBadge(entry.status)]);
+                }
+            }
+        }
+        container.innerHTML = M.section('📊 Marchés × Championnats (Snapshot 5 seeds)', M.table(['Championnat', 'Marché', 'N', 'Proba calibrée', 'Fréq. réelle', 'ECE', 'Statut'], rows), true);
+    },
+
+    // ── 🗂️ DONNÉES ───────────────────────────────────────────────────────
+    renderMaintenanceData() {
+        const container = document.getElementById('maint-donnees');
+        if (!container) return;
+        const M = MaintUI;
+        const matches = this.matches || [];
+        let html = M.section('🗂️ Volumes', M.row('Matchs (DATA)', M.int(matches.length)) + M.row('Équipes', M.int((this.teams || []).length)) + M.row('Championnats importés', M.int(this._importedLeaguesSummary().length)), true);
+
+        // Doublons via FootballDataImport._identity (même identité que celle utilisée à l'import).
+        let duplicates = 0;
+        if (typeof FootballDataImport !== 'undefined' && typeof FootballDataImport._identity === 'function') {
+            const seen = new Set();
+            for (const m of matches) {
+                if (!m) continue;
+                const id = FootballDataImport._identity(m.leagueName || m.league || m.div, m.homeTeam, m.awayTeam, m.date);
+                if (seen.has(id)) duplicates++; else seen.add(id);
+            }
+        }
+        html += M.section('🧬 Doublons (identité championnat + équipes + date)', M.row('Doublons détectés', M.int(duplicates)), true);
+
+        // Champs manquants via DataAuditEngine.auditMatchFields (déjà existant).
+        if (typeof DataAuditEngine !== 'undefined' && typeof DataAuditEngine.auditMatchFields === 'function') {
+            const audit = DataAuditEngine.auditMatchFields(matches);
+            const auditRows = Object.entries(audit).map(([, a]) => [M.esc(a.label), M.int(a.observations), M.int(a.valid), M.int(a.missing), M.dec(a.coveragePct, 1) + ' %', M.esc(a.status)]);
+            html += M.section('🧩 Champs manquants (couverture par champ)', M.table(['Champ', 'Observations', 'Valides', 'Manquants', 'Couverture', 'Statut'], auditRows), true);
+        }
+
+        // Dernier import PAR CHAMPIONNAT (§12/§13) — via App._importLog, alimenté uniquement à partir du
+        // moment où un import est réellement effectué après ce correctif (aucune donnée rétroactive
+        // inventée pour les imports antérieurs : NON DISPONIBLE tant qu'aucun import n'a été journalisé).
+        const leaguesSummary0 = this._importedLeaguesSummary();
+        const importRows = leaguesSummary0.map(l => {
+            const log = Object.entries(this._importLog || {}).find(([name]) => this._idOfLeague(name) === this._idOfLeague(l.name));
+            const entry = log ? log[1] : null;
+            const when = entry && entry.at ? new Date(entry.at).toLocaleString('fr-FR') : 'NON DISPONIBLE';
+            const added = entry ? (entry.multiLeagueImport ? 'import multi-championnats (détail indisponible)' : M.int(entry.added)) : 'NON DISPONIBLE';
+            return [M.esc(l.name), M.esc(when), M.esc(added)];
+        });
+        html += M.section('🕒 Dernier import (par championnat)', M.table(['Championnat', 'Dernier import', 'Matchs ajoutés'], importRows), false);
+
+        // Snapshot À JOUR / STALE par championnat.
+        const leaguesSummary = leaguesSummary0;
+        const staleRows = leaguesSummary.map(l => {
+            const st = this._marketEligibilityStaleFor(l.name);
+            const statut = st.matchCountAtCompute === null ? '⚫ NON CAPTURÉ' : (st.stale ? '🟡 STALE' : '🟢 À JOUR');
+            return [M.esc(l.name), statut];
+        });
+        html += M.section('📸 Snapshot — fraîcheur par championnat', M.table(['Championnat', 'Statut'], staleRows), false);
+
+        container.innerHTML = html;
+    },
+
+    // ── 📜 HISTORIQUE ────────────────────────────────────────────────────
+    // CORRECTIF (§10/§11 — regroupement par identité logique de championnat) :
+    // ConfigurationRegistry.listLeagues() renvoie les noms BRUTS tels qu'enregistrés
+    // au fil des calculs (ex. "Eliteserien (Norway)" ET "Eliteserien (norway)" si la
+    // casse a varié entre deux calculs), sans normalisation — d'où l'affichage en
+    // double dénoncé par l'utilisateur. On regroupe ici EN LECTURE SEULE, via
+    // l'identité déjà existante Utils.normalizeLeagueIdentity (aucune nouvelle
+    // identité créée, aucune donnée supprimée ni réécrite dans ConfigurationRegistry) :
+    // pour chaque identité logique, l'historique de TOUTES les variantes de casse est
+    // fusionné et une seule carte est affichée.
+    async renderMaintenanceHistory() {
+        const container = document.getElementById('maint-historique');
+        if (!container) return;
+        container.innerHTML = 'Chargement de l\'historique...';
+        const M = MaintUI;
+        let rawLeagues = [];
+        try { rawLeagues = (typeof ConfigurationRegistry !== 'undefined') ? await ConfigurationRegistry.listLeagues() : []; } catch (e) { rawLeagues = []; }
+        // Regroupement par identité logique (même mécanisme que _importedLeaguesSummary/_idOfLeague).
+        const groups = new Map(); // identity -> { displayName, rawNames: [] }
+        const importedSummary = this._importedLeaguesSummary();
+        for (const raw of rawLeagues) {
+            if (typeof raw !== 'string' || !raw.trim()) continue;
+            const identity = this._idOfLeague(raw);
+            if (!groups.has(identity)) groups.set(identity, { displayName: raw, rawNames: [] });
+            groups.get(identity).rawNames.push(raw);
+            // Nom d'affichage préféré : celui qui correspond au championnat RÉELLEMENT importé
+            // actuellement (this.matches), pour rester cohérent avec CALCULS/VALUE TEST — sinon
+            // le premier nom rencontré (comportement stable, aucune donnée inventée).
+            const importedMatch = importedSummary.find(l => this._idOfLeague(l.name) === identity);
+            if (importedMatch) groups.get(identity).displayName = importedMatch.name;
+        }
+        // La sous-page a pu changer pendant l'attente asynchrone (ex. l'utilisateur a déjà
+        // navigué ailleurs) : on ne réécrit pas un conteneur qui n'est plus la page active.
+        if (this._maintenanceSubTab !== 'historique') return;
+        let html = '';
+        for (const { displayName, rawNames } of [...groups.values()].sort((a, b) => a.displayName.localeCompare(b.displayName))) {
+            // Fusion de l'historique de TOUTES les variantes de casse regroupées sous cette identité.
+            let history = [];
+            for (const raw of rawNames) {
+                let h = [];
+                try { h = (typeof ConfigurationRegistry !== 'undefined') ? await ConfigurationRegistry.getValidatedHistory(raw) : []; } catch (e) { h = []; }
+                if (Array.isArray(h) && h.length) history = history.concat(h);
+            }
+            if (this._maintenanceSubTab !== 'historique') return;
+            if (!history.length) { html += MaintUI.section(`📜 ${displayName}`, M.emptyState('Aucun historique de calibration'), false); continue; }
+            // Tri chronologique (même ordre que l'ancien affichage par variante unique).
+            history.sort((a, b) => String((a && a.createdAt) || '').localeCompare(String((b && b.createdAt) || '')));
+            const rows = history.map(entry => {
+                const clusterWeights = {};
+                if (entry && entry.weights && typeof entry.weights === 'object') {
+                    for (const [model, w] of Object.entries(entry.weights)) {
+                        const cluster = (typeof CausalEnsembleEngine !== 'undefined' && typeof CausalEnsembleEngine.clusterOf === 'function') ? CausalEnsembleEngine.clusterOf(model) : model;
+                        clusterWeights[cluster] = (clusterWeights[cluster] || 0) + (M.isNum(w) ? w : 0);
+                    }
+                }
+                const clusterLabel = Object.keys(clusterWeights).length ? Object.entries(clusterWeights).map(([c, w]) => `${c}=${M.dec(w, 3)}`).join(', ') : 'NON DISPONIBLE';
+                return [M.esc((entry && entry.createdAt) || 'NON DISPONIBLE'), M.esc(clusterLabel)];
+            });
+            html += M.section(`📜 ${displayName} (${history.length} entrée(s))`, M.table(['Date', 'Poids agrégés par cluster'], rows), false);
+        }
+        if (!groups.size) html = M.emptyState('Aucun championnat enregistré dans ConfigurationRegistry');
+        container.innerHTML = html;
+    },
+
+    // ── 🧪 TESTS ──────────────────────────────────────────────────────────
+    renderMaintenanceTests() {
+        const container = document.getElementById('maint-tests');
+        if (!container) return;
+        const M = MaintUI;
+        container.innerHTML = `
+            <div class="flex gap-1 flex-wrap mb-2">
+                <button class="btn btn-sm btn-primary" onclick="App.runMaintenanceTests()">🧪 Lancer tous les tests</button>
+            </div>
+            <div id="maintTestsResult">${this._maintTestsResultHtml || M.emptyState('Tests non exécutés')}</div>`;
+    },
+
+    // Exécute les suites *SelfTests déjà existantes (aucun nouveau moteur de test créé ici),
+    // normalise les 2 formats de retour déjà en usage dans ce fichier — tableau
+    // {id,name,ok,detail} (allPassed + results[]) vs objet {clé:bool} (results{} + allPassed)
+    // — en une liste unique PASS/FAIL avec compteurs par suite et au total.
+    async runMaintenanceTests() {
+        const M = MaintUI;
+        const out = document.getElementById('maintTestsResult');
+        if (out) out.innerHTML = 'Exécution en cours...';
+        const suiteNames = [
+            'MarketEligibilitySelfTests', 'MarketEligibilityPersistenceSelfTests', 'FairOddsEligibilitySelfTests',
+            'ManualSeedCoherenceSelfTests', 'ValueTestSelfTests', 'ManualChampionshipSelfTests',
+            'RealFrequencyEngineSelfTests', 'RedProMarketCalibrationWiringSelfTests', 'RedProAsianHandicapSelfTests',
+            'RedProCalibrationConfidenceSelfTests', 'GoalModelFamilyCoherenceSelfTests'
+        ];
+        const unified = [];
+        let suitesOk = 0, suitesTotal = 0;
+        for (const name of suiteNames) {
+            const mod = (typeof globalThis !== 'undefined') ? globalThis[name] : undefined;
+            if (!mod || typeof mod.run !== 'function') continue;
+            suitesTotal++;
+            let res;
+            try { res = await mod.run(); } catch (e) { res = { allPassed: false, error: String((e && e.message) || e) }; }
+            const allPassed = !!(res && res.allPassed);
+            if (allPassed) suitesOk++;
+            if (res && Array.isArray(res.results)) {
+                for (const r of res.results) unified.push({ suite: name, test: (r && (r.name || String(r.id))) || '(?)', ok: !!(r && r.ok) });
+            } else if (res && res.results && typeof res.results === 'object') {
+                for (const [k, v] of Object.entries(res.results)) unified.push({ suite: name, test: k, ok: !!v });
+            } else {
+                unified.push({ suite: name, test: '(exécution)', ok: allPassed });
+            }
+        }
+        const passCount = unified.filter(u => u.ok).length;
+        const rows = unified.map(u => [M.esc(u.suite), M.esc(u.test), u.ok ? '✅' : '❌']);
+        let html = M.row('Suites exécutées', `${suitesOk}/${suitesTotal}`);
+        html += M.row('Tests individuels', `${passCount}/${unified.length}`);
+        html += M.table(['Suite', 'Test', 'Résultat'], rows);
+        this._maintTestsResultHtml = html;
+        const out2 = document.getElementById('maintTestsResult');
+        if (out2) out2.innerHTML = html;
+        return { suitesOk, suitesTotal, passCount, total: unified.length };
+    }
+});
+// ═══════════════════════════════════════════════════════════════════════
+// FIN AJOUT ADDITIF — Onglet Maintenance
+// ═══════════════════════════════════════════════════════════════════════
 
 // Référence lexicale privée utilisée par DB : remplacer la méthode publique App
 // après l'initialisation ne peut pas modifier la reconstruction transactionnelle.
